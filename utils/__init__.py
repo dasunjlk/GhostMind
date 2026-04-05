@@ -1,0 +1,1 @@
+"""GhostMind utilities."""

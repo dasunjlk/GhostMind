@@ -1,0 +1,35 @@
+# Secrets
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# Logs and local data
+*.log
+
+# User-specific configuration (generated on first run)
+config/settings.toml
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+*.spec
+.idea/
+.vscode/
+
+# Whisper / model caches (optional local)
+.cache/
