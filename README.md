@@ -62,9 +62,11 @@ python main.py
 | Trigger screen OCR + AI | `Ctrl+Shift+S` |
 | Clear answers | `Ctrl+Shift+C` |
 | Switch Answers ↔ Subtitles tab | `Ctrl+Shift+T` |
+| Export transcript | `Ctrl+Shift+E` |
 
-- **Answers** tab: shows streamed Claude output with copy per block.
-- **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` schedule a short debounce, then the recent transcript is sent to Claude as **meeting** context (the model decides whether to answer or summarize).
+- **Answers** tab: shows streamed Llama output with copy per block.
+- **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` schedule a short debounce, then the recent transcript is sent to Llama as **meeting** context (the model decides whether to answer or summarize).
+- **Export**: save the full transcript to `.txt` or `.md` via the Save button in Subtitles tab, `Ctrl+Shift+E`, or the tray menu.
 
 Use the **green** header dot to open settings (saved to `config/settings.toml`).
 

@@ -87,11 +87,16 @@ class AudioListener(QThread):
         self._model_size = model_size
         self._running = False
         self._transcript: Deque[Tuple[float, str, str]] = deque()
+        self._full_transcript: List[Tuple[float, str, str]] = []
 
     def transcript_snapshot(self) -> List[Tuple[float, str, str]]:
         """(timestamp, source, text) tuples within rolling window."""
         now = time.time()
         return [(t, s, x) for t, s, x in self._transcript if now - t <= ROLLING_SEC]
+
+    def full_transcript(self) -> List[Tuple[float, str, str]]:
+        """All recorded transcript entries since start."""
+        return list(self._full_transcript)
 
     def start_listening(self) -> None:
         if not self.isRunning():
@@ -227,6 +232,7 @@ class AudioListener(QThread):
                 return
             ts = time.time()
             self._transcript.append((ts, source, text))
+            self._full_transcript.append((ts, source, text))
             line = f"{source}: {text}"
             self.subtitle_updated.emit(line)
         except Exception as e:

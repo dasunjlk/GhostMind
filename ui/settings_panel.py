@@ -56,6 +56,7 @@ class SettingsPanel(QWidget):
         self._hk_scan = QLineEdit()
         self._hk_clear = QLineEdit()
         self._hk_sub = QLineEdit()
+        self._hk_export = QLineEdit()
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -92,6 +93,7 @@ class SettingsPanel(QWidget):
         form.addRow("Screen scan", self._hk_scan)
         form.addRow("Clear answers", self._hk_clear)
         form.addRow("Toggle subtitles", self._hk_sub)
+        form.addRow("Export transcript", self._hk_export)
         form.addRow("API key", self._api_key)
 
         test_btn = QPushButton("Test API key")
@@ -165,8 +167,9 @@ class SettingsPanel(QWidget):
         self._hk_scan.setText(str(hk.get("screen_scan", "ctrl+shift+s")))
         self._hk_clear.setText(str(hk.get("clear_answers", "ctrl+shift+c")))
         self._hk_sub.setText(str(hk.get("toggle_subtitles", "ctrl+shift+t")))
+        self._hk_export.setText(str(hk.get("export_transcript", "ctrl+shift+e")))
 
-        key = os.environ.get("ANTHROPIC_API_KEY", "")
+        key = os.environ.get("GROQ_API_KEY", "")
         if key:
             self._api_key.setPlaceholderText("•••• (loaded from .env)")
         self._api_key.clear()
@@ -196,6 +199,7 @@ class SettingsPanel(QWidget):
                 "screen_scan": self._hk_scan.text().strip(),
                 "clear_answers": self._hk_clear.text().strip(),
                 "toggle_subtitles": self._hk_sub.text().strip(),
+                "export_transcript": self._hk_export.text().strip(),
             },
         }
 
@@ -203,22 +207,22 @@ class SettingsPanel(QWidget):
         d = self.collect_data()
         k = self._api_key.text().strip()
         if k:
-            os.environ["ANTHROPIC_API_KEY"] = k
+            os.environ["GROQ_API_KEY"] = k
         self.saved.emit(d)
 
     def _on_test_api(self) -> None:
-        k = self._api_key.text().strip() or os.environ.get("ANTHROPIC_API_KEY", "")
+        k = self._api_key.text().strip() or os.environ.get("GROQ_API_KEY", "")
         if not k:
-            QMessageBox.warning(self, "API key", "Enter an API key or set ANTHROPIC_API_KEY in .env")
+            QMessageBox.warning(self, "API key", "Enter an API key or set GROQ_API_KEY in .env")
             return
 
         def _work() -> None:
             try:
-                import anthropic
+                from groq import Groq
 
-                client = anthropic.Anthropic(api_key=k)
-                client.messages.create(
-                    model="claude-sonnet-4-20250514",
+                client = Groq(api_key=k)
+                client.chat.completions.create(
+                    model="llama-3.1-70b-versatile",
                     max_tokens=16,
                     messages=[{"role": "user", "content": "Reply with OK only."}],
                 )
@@ -238,11 +242,11 @@ class SettingsPanel(QWidget):
 def run_api_self_test(api_key: str, on_done: Callable[[bool, str], None]) -> None:
     """Synchronous API check (prefer threaded _on_test_api in SettingsPanel)."""
     try:
-        import anthropic
+        from groq import Groq
 
-        client = anthropic.Anthropic(api_key=api_key)
-        client.messages.create(
-            model="claude-sonnet-4-20250514",
+        client = Groq(api_key=api_key)
+        client.chat.completions.create(
+            model="llama-3.1-70b-versatile",
             max_tokens=16,
             messages=[{"role": "user", "content": "Reply with OK only."}],
         )

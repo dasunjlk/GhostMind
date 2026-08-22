@@ -7,9 +7,9 @@ import re
 from collections import deque
 from typing import Deque
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QFrame, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 
 _QUESTION_RE = re.compile(
@@ -19,6 +19,8 @@ _QUESTION_RE = re.compile(
 
 
 class SubtitleBar(QWidget):
+    save_requested = pyqtSignal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._lines: Deque[str] = deque(maxlen=6)
@@ -34,8 +36,24 @@ class SubtitleBar(QWidget):
             "border-radius: 6px; font-size: 13px; }"
         )
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel("Ctrl+Shift+E to export")
+        hint.setStyleSheet("color:#555;font-size:10px;")
+        header.addWidget(hint)
+        header.addStretch(1)
+        save_btn = QPushButton("Save")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet(
+            "QPushButton { background:#1A1A1A;color:#00FF88;border:none;padding:3px 10px;" font-size:11px; }"
+            "QPushButton:hover { background:#252525; }"
+        )
+        save_btn.clicked.connect(self.save_requested.emit)
+        header.addWidget(save_btn)
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.addLayout(header)
         lay.addWidget(self._view)
 
     def append_line(self, line: str) -> None:
