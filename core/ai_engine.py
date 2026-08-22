@@ -82,10 +82,16 @@ def build_user_message(context_type: str, content: str) -> str:
 def _get_client() -> Groq:
     load_dotenv()
     if Groq is None:
-        raise RuntimeError("groq package not installed (pip install groq)")
+        raise RuntimeError(
+            "groq package is not installed.\n"
+            "Install it with: pip install groq"
+        )
     key = os.environ.get("GROQ_API_KEY", "").strip()
     if not key:
-        raise RuntimeError("GROQ_API_KEY is not set in .env")
+        raise RuntimeError(
+            "GROQ_API_KEY is not set.\n"
+            "Get a free key at https://console.groq.com and add it to your .env file."
+        )
     return Groq(api_key=key)
 
 

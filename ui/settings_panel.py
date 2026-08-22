@@ -5,11 +5,13 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QFormLayout,
     QHBoxLayout,
     QLabel,
@@ -56,6 +58,8 @@ class SettingsPanel(QWidget):
         self._hk_scan = QLineEdit()
         self._hk_clear = QLineEdit()
         self._hk_sub = QLineEdit()
+        self._hk_export = QLineEdit()
+        self._hk_click = QLineEdit()
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -92,6 +96,8 @@ class SettingsPanel(QWidget):
         form.addRow("Screen scan", self._hk_scan)
         form.addRow("Clear answers", self._hk_clear)
         form.addRow("Toggle subtitles", self._hk_sub)
+        form.addRow("Export transcript", self._hk_export)
+        form.addRow("Toggle click-through", self._hk_click)
         form.addRow("API key", self._api_key)
 
         test_btn = QPushButton("Test API key")
@@ -118,8 +124,26 @@ class SettingsPanel(QWidget):
         )
         close_btn.clicked.connect(self.hide)
 
+        import_btn = QPushButton("Import")
+        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_btn.setStyleSheet(
+            "QPushButton{background:#1A1A1A;color:#E0E0E0;border:none;padding:6px 12px;}"
+            "QPushButton:hover{background:#252525;}"
+        )
+        import_btn.clicked.connect(self._on_import)
+
+        export_btn = QPushButton("Export")
+        export_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        export_btn.setStyleSheet(
+            "QPushButton{background:#1A1A1A;color:#E0E0E0;border:none;padding:6px 12px;}"
+            "QPushButton:hover{background:#252525;}"
+        )
+        export_btn.clicked.connect(self._on_export)
+
         row = QHBoxLayout()
         row.addWidget(test_btn)
+        row.addWidget(import_btn)
+        row.addWidget(export_btn)
         row.addStretch(1)
         row.addWidget(close_btn)
         row.addWidget(save_btn)
@@ -165,6 +189,8 @@ class SettingsPanel(QWidget):
         self._hk_scan.setText(str(hk.get("screen_scan", "ctrl+shift+s")))
         self._hk_clear.setText(str(hk.get("clear_answers", "ctrl+shift+c")))
         self._hk_sub.setText(str(hk.get("toggle_subtitles", "ctrl+shift+t")))
+        self._hk_export.setText(str(hk.get("export_transcript", "ctrl+shift+e")))
+        self._hk_click.setText(str(hk.get("toggle_click_through", "ctrl+shift+x")))
 
         key = os.environ.get("GROQ_API_KEY", "")
         if key:
@@ -196,6 +222,8 @@ class SettingsPanel(QWidget):
                 "screen_scan": self._hk_scan.text().strip(),
                 "clear_answers": self._hk_clear.text().strip(),
                 "toggle_subtitles": self._hk_sub.text().strip(),
+                "export_transcript": self._hk_export.text().strip(),
+                "toggle_click_through": self._hk_click.text().strip(),
             },
         }
 
@@ -233,6 +261,40 @@ class SettingsPanel(QWidget):
             QMessageBox.information(self, "API", msg)
         else:
             QMessageBox.warning(self, "API", msg)
+
+    def _on_import(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Settings", "", "JSON files (*.json);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            from utils.config_io import import_settings
+
+            data = import_settings(path)
+            if data is None:
+                QMessageBox.warning(self, "Import failed", "Could not read settings file.")
+                return
+            self.apply_data(data)
+            QMessageBox.information(self, "Imported", "Settings loaded. Click Save to apply.")
+        except Exception as e:
+            QMessageBox.warning(self, "Import failed", str(e))
+
+    def _on_export(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Settings", "ghostmind_settings.json",
+            "JSON files (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            from utils.config_io import export_settings
+
+            data = self.collect_data()
+            export_settings(data, path)
+            QMessageBox.information(self, "Exported", f"Settings saved to {Path(path).name}")
+        except Exception as e:
+            QMessageBox.warning(self, "Export failed", str(e))
 
 
 def run_api_self_test(api_key: str, on_done: Callable[[bool, str], None]) -> None:

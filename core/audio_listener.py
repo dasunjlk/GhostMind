@@ -87,11 +87,16 @@ class AudioListener(QThread):
         self._model_size = model_size
         self._running = False
         self._transcript: Deque[Tuple[float, str, str]] = deque()
+        self._full_transcript: List[Tuple[float, str, str]] = []
 
     def transcript_snapshot(self) -> List[Tuple[float, str, str]]:
         """(timestamp, source, text) tuples within rolling window."""
         now = time.time()
         return [(t, s, x) for t, s, x in self._transcript if now - t <= ROLLING_SEC]
+
+    def full_transcript(self) -> List[Tuple[float, str, str]]:
+        """All recorded transcript entries since start."""
+        return list(self._full_transcript)
 
     def start_listening(self) -> None:
         if not self.isRunning():
@@ -104,14 +109,21 @@ class AudioListener(QThread):
 
     def run(self) -> None:
         if WhisperModel is None:
-            self.failed.emit("faster-whisper is not installed")
+            self.failed.emit(
+                "faster-whisper is not installed.\n"
+                "Audio transcription is unavailable.\n"
+                "Install it with: pip install faster-whisper"
+            )
             return
         self._running = True
         try:
             model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
         except Exception as e:
             logger.exception("Whisper model load failed")
-            self.failed.emit(f"Whisper model load failed: {e}")
+            self.failed.emit(
+                f"Whisper model '{self._model_size}' failed to load: {e}\n\n"
+                "Try a smaller model (tiny) in Settings, or check your internet connection."
+            )
             return
 
         mic_q: queue.Queue = queue.Queue()
@@ -227,6 +239,7 @@ class AudioListener(QThread):
                 return
             ts = time.time()
             self._transcript.append((ts, source, text))
+            self._full_transcript.append((ts, source, text))
             line = f"{source}: {text}"
             self.subtitle_updated.emit(line)
         except Exception as e:

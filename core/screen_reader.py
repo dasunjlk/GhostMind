@@ -77,9 +77,22 @@ def _preprocess_for_ocr(img: Image.Image) -> Image.Image:
 
 def extract_text(image: Image.Image, preprocess: bool = True) -> str:
     if pytesseract is None:
-        raise RuntimeError("pytesseract is not installed")
+        raise RuntimeError(
+            "pytesseract is not installed. "
+            "Install it with: pip install pytesseract\n"
+            "You also need Tesseract OCR on PATH: choco install tesseract"
+        )
     work = _preprocess_for_ocr(image) if preprocess else image
-    text = pytesseract.image_to_string(work)
+    try:
+        text = pytesseract.image_to_string(work)
+    except pytesseract.TesseractNotFoundError:
+        raise RuntimeError(
+            "Tesseract executable not found on PATH.\n"
+            "Install Tesseract: choco install tesseract\n"
+            "Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
+        )
+    except Exception as e:
+        raise RuntimeError(f"OCR failed: {e}")
     return (text or "").strip()
 
 

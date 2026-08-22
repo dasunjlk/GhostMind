@@ -21,6 +21,8 @@ class HotkeyManager(QObject):
     trigger_screen_scan = pyqtSignal()
     clear_answers = pyqtSignal()
     toggle_subtitles = pyqtSignal()
+    export_transcript = pyqtSignal()
+    toggle_click_through = pyqtSignal()
 
     def __init__(self, parent: Optional[QObject] = None) -> None:
         super().__init__(parent)
@@ -33,6 +35,8 @@ class HotkeyManager(QObject):
         scan: str,
         clear: str,
         toggle_sub: str,
+        export: str = "",
+        click_through: str = "",
     ) -> None:
         self.unregister_all()
         if keyboard is None:
@@ -44,6 +48,8 @@ class HotkeyManager(QObject):
             scan: self.trigger_screen_scan.emit,
             clear: self.clear_answers.emit,
             toggle_sub: self.toggle_subtitles.emit,
+            export: self.export_transcript.emit,
+            click_through: self.toggle_click_through.emit,
         }
 
         for combo, emitter in mapping.items():
