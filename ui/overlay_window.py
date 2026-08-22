@@ -97,6 +97,7 @@ class _RoundCtl(QPushButton):
 
 class OverlayWindow(QMainWindow):
     settings_changed = pyqtSignal(dict)
+    closeRequested = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -108,6 +109,7 @@ class OverlayWindow(QMainWindow):
         self._ai_worker: Optional[AiStreamWorker] = None
         self._scan_worker: Optional[ScreenScanWorker] = None
         self._visible_target = True
+        self.close_event_allowed = True
 
         _load_fonts(repo_root)
 
@@ -431,6 +433,14 @@ class OverlayWindow(QMainWindow):
             self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
         else:
             self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+
+    def closeEvent(self, e) -> None:
+        """Intercept close: hide to tray unless close_event_allowed is True."""
+        if not self.close_event_allowed:
+            e.ignore()
+            self.closeRequested.emit()
+        else:
+            super().closeEvent(e)
 
     def leaveEvent(self, e) -> None:
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))

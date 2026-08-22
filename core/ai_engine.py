@@ -1,5 +1,5 @@
 """
-Claude API integration with prompt routing and streaming via background worker.
+Groq API integration (Llama 3.1 70B) with prompt routing and streaming via background worker.
 """
 from __future__ import annotations
 
@@ -15,11 +15,11 @@ from PyQt6.QtCore import QObject, pyqtSignal, QThread
 logger = logging.getLogger(__name__)
 
 try:
-    import anthropic
+    from groq import Groq
 except ImportError:  # pragma: no cover
-    anthropic = None  # type: ignore
+    Groq = None  # type: ignore
 
-MODEL_ID = "claude-sonnet-4-20250514"
+MODEL_ID = "llama-3.1-70b-versatile"
 MAX_TOKENS = 1024
 
 BASE_SYSTEM = (
@@ -79,30 +79,32 @@ def build_user_message(context_type: str, content: str) -> str:
     return f"Screen OCR text:\n\n{content}"
 
 
+def _get_client() -> Groq:
+    load_dotenv()
+    if Groq is None:
+        raise RuntimeError("groq package not installed (pip install groq)")
+    key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("GROQ_API_KEY is not set in .env")
+    return Groq(api_key=key)
+
+
 async def generate_answer(content: str, context_type: str = "screen") -> str:
     """Async API call (non-streaming); used for tests or direct await."""
-    load_dotenv()
-    if anthropic is None:
-        raise RuntimeError("anthropic package not installed")
-    key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set")
-    client = anthropic.Anthropic(api_key=key)
+    client = _get_client()
     system = build_system_prompt(context_type, content)
     user_msg = build_user_message(context_type, content)
     msg = await asyncio.to_thread(
-        lambda: client.messages.create(
+        lambda: client.chat.completions.create(
             model=MODEL_ID,
             max_tokens=MAX_TOKENS,
-            system=system,
-            messages=[{"role": "user", "content": user_msg}],
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user_msg},
+            ],
         )
     )
-    parts = []
-    for block in msg.content:
-        if hasattr(block, "text"):
-            parts.append(block.text)
-    return "".join(parts).strip()
+    return (msg.choices[0].message.content or "").strip()
 
 
 class AiStreamWorker(QThread):
@@ -116,60 +118,52 @@ class AiStreamWorker(QThread):
         self._context_type = context_type
 
     def run(self) -> None:
-        load_dotenv()
-        if anthropic is None:
-            self.failed.emit("anthropic package not installed")
-            return
-        key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        if not key:
-            self.failed.emit("ANTHROPIC_API_KEY is not set")
+        try:
+            client = _get_client()
+        except Exception as e:
+            self.failed.emit(str(e))
             return
 
         system = build_system_prompt(self._context_type, self._content)
         user_msg = build_user_message(self._context_type, self._content)
-        client = anthropic.Anthropic(api_key=key)
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_msg},
+        ]
 
         attempts = 0
         last_err: Optional[Exception] = None
         while attempts < 3:
             attempts += 1
             try:
-                stream_mgr = client.messages.stream(
+                stream = client.chat.completions.create(
                     model=MODEL_ID,
                     max_tokens=MAX_TOKENS,
-                    system=system,
-                    messages=[{"role": "user", "content": user_msg}],
+                    messages=messages,
+                    stream=True,
                 )
-                with stream_mgr as stream:
-                    ts = getattr(stream, "text_stream", None)
-                    if ts is None:
-                        raise RuntimeError("Streaming API has no text_stream")
-                    for text in ts:
-                        if text:
-                            self.chunk_received.emit(text)
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        self.chunk_received.emit(chunk.choices[0].delta.content)
                 self.finished_ok.emit()
                 return
             except Exception as e:
                 last_err = e
-                logger.warning("Anthropic stream failed (attempt %s): %s", attempts, e)
+                logger.warning("Groq stream failed (attempt %s): %s", attempts, e)
+                # Fallback: non-streaming request
                 try:
-                    msg = client.messages.create(
+                    resp = client.chat.completions.create(
                         model=MODEL_ID,
                         max_tokens=MAX_TOKENS,
-                        system=system,
-                        messages=[{"role": "user", "content": user_msg}],
+                        messages=messages,
                     )
-                    parts = []
-                    for block in msg.content:
-                        if hasattr(block, "text"):
-                            parts.append(block.text)
-                    body = "".join(parts).strip()
+                    body = (resp.choices[0].message.content or "").strip()
                     if body:
                         self.chunk_received.emit(body)
                     self.finished_ok.emit()
                     return
                 except Exception as e2:
                     last_err = e2
-                    logger.warning("Anthropic non-stream fallback failed: %s", e2)
+                    logger.warning("Groq non-stream fallback failed: %s", e2)
                 time.sleep(0.75 * attempts)
         self.failed.emit(str(last_err) if last_err else "Unknown API error")
