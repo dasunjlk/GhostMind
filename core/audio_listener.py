@@ -109,14 +109,21 @@ class AudioListener(QThread):
 
     def run(self) -> None:
         if WhisperModel is None:
-            self.failed.emit("faster-whisper is not installed")
+            self.failed.emit(
+                "faster-whisper is not installed.\n"
+                "Audio transcription is unavailable.\n"
+                "Install it with: pip install faster-whisper"
+            )
             return
         self._running = True
         try:
             model = WhisperModel(self._model_size, device="cpu", compute_type="int8")
         except Exception as e:
             logger.exception("Whisper model load failed")
-            self.failed.emit(f"Whisper model load failed: {e}")
+            self.failed.emit(
+                f"Whisper model '{self._model_size}' failed to load: {e}\n\n"
+                "Try a smaller model (tiny) in Settings, or check your internet connection."
+            )
             return
 
         mic_q: queue.Queue = queue.Queue()

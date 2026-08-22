@@ -16,21 +16,21 @@
 
 - [x] ~~Add system tray icon (restore overlay from hidden)~~
 - [x] ~~Add transcript export (save meeting transcript to `.txt` / `.md`)~~
-- [ ] Graceful error messages when Tesseract or other deps are missing
-- [ ] Add logging to file for crash diagnostics (`ghostmind.log`)
+- [x] ~~Graceful error messages when Tesseract or other deps are missing~~
+- [x] ~~Add logging to file for crash diagnostics (`ghostmind.log`)~~
 
 ## Priority 3 — Quality & Polish
 
-- [ ] Unit tests: `formatter.py` (markdown → HTML)
-- [ ] Unit tests: `ai_engine.py` prompt routing (`_classify_screen_text`)
-- [ ] Unit tests: `hotkey_manager.py` signal wiring
-- [ ] Improve subtitle question detection (smarter regex)
-- [ ] Click-through toggle UX (hotkey-only escape hatch when enabled)
-- [ ] Add window icon (`assets/icon.ico`)
+- [x] ~~Unit tests: `formatter.py` (markdown → HTML)~~
+- [x] ~~Unit tests: `ai_engine.py` prompt routing (`_classify_screen_text`)~~
+- [x] ~~Unit tests: `hotkey_manager.py` signal wiring~~
+- [x] ~~Improve subtitle question detection (smarter regex)~~
+- [x] ~~Click-through toggle UX (hotkey-only escape hatch when enabled)~~
+- [x] ~~Add window icon (`assets/icon.ico`) — generated with Pillow~~
 - [ ] Add custom fonts (`assets/fonts/` — JetBrains Mono, Inter)
-- [ ] Auto-start on Windows login (optional, via registry)
-- [ ] Settings import/export (share configs across machines)
-- [ ] Keyboard navigation within the overlay UI
+- [x] ~~Auto-start on Windows login (optional, via registry)~~
+- [x] ~~Settings import/export (share configs across machines)~~
+- [x] ~~Keyboard navigation within the overlay UI~~
 
 ## Completed
 
@@ -45,6 +45,17 @@
 - [x] MIT License
 - [x] System tray icon (green circle with 'G', context menu, double-click toggle, close→hide)
 - [x] Transcript export (full history to .txt/.md, Save button, Ctrl+Shift+E, tray menu)
+- [x] Startup dependency check (warns about missing Tesseract, Groq, Whisper, etc.)
+- [x] Graceful error handling (OCR, audio, AI, screen capture)
+- [x] File logging with rotation (ghostmind.log, 1MB x 3 backups)
+- [x] Unit tests (formatter: 20 tests, prompt routing, hotkey manager)
+- [x] Improved subtitle question detection (40+ question patterns)
+- [x] Click-through toggle hotkey (Ctrl+Shift+X) with tray notification
+- [x] Window icon (programmatic ICO with Pillow)
+- [x] Auto-start on Windows login (registry-based, toggleable)
+- [x] Settings import/export (JSON format, shareable)
+- [x] Keyboard navigation (Escape, Tab, Backtab)
+- [x] .gitignore updated with TODO.md, ghostmind.log
 
 ---
 

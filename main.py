@@ -4,6 +4,8 @@ GhostMind — stealth PyQt6 overlay entry point.
 from __future__ import annotations
 
 import logging
+import logging.handlers
+import os
 import signal
 import sys
 import time
@@ -27,6 +29,75 @@ from core.audio_listener import AudioListener
 from ui.overlay_window import OverlayWindow
 from utils.hotkey_manager import HotkeyManager
 
+
+def check_dependencies() -> List[str]:
+    """Check for required packages and return a list of warning messages."""
+    warnings: List[str] = []
+
+    # Tesseract binary (pytesseract may be installed but tesseract.exe missing)
+    try:
+        import pytesseract
+
+        pytesseract.get_tesseract_version()
+    except Exception:
+        warnings.append(
+            "Tesseract OCR not found.\n"
+            "  Screen scanning (OCR) will not work.\n"
+            "  Install: choco install tesseract\n"
+            "  Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
+        )
+
+    # Groq SDK
+    try:
+        from groq import Groq  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "groq package not installed.\n"
+            "  AI answers will not work.\n"
+            "  Install: pip install groq"
+        )
+
+    # Groq API key
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not groq_key:
+        warnings.append(
+            "GROQ_API_KEY is not set.\n"
+            "  AI answers will not work.\n"
+            "  Get a free key at https://console.groq.com and add it to .env"
+        )
+
+    # faster-whisper
+    try:
+        from faster_whisper import WhisperModel  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "faster-whisper not installed.\n"
+            "  Audio transcription will not work.\n"
+            "  Install: pip install faster-whisper"
+        )
+
+    # sounddevice
+    try:
+        import sounddevice  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "sounddevice not installed.\n"
+            "  Audio capture will not work.\n"
+            "  Install: pip install sounddevice"
+        )
+
+    # keyboard
+    try:
+        import keyboard  # noqa: F401
+    except ImportError:
+        warnings.append(
+            "keyboard not installed.\n"
+            "  Global hotkeys will not work.\n"
+            "  Install: pip install keyboard"
+        )
+
+    return warnings
+
 REPO_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = REPO_ROOT / "config" / "settings.toml"
 
@@ -41,17 +112,43 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "capture_mic": True,
     "capture_system": False,
     "whisper_model": "base",
-    "loopback_device": None,
-    "hotkeys": {
+    "loopback_device": None,        "hotkeys": {
         "toggle_visibility": "ctrl+shift+g",
         "screen_scan": "ctrl+shift+s",
         "clear_answers": "ctrl+shift+c",
         "toggle_subtitles": "ctrl+shift+t",
         "export_transcript": "ctrl+shift+e",
+        "toggle_click_through": "ctrl+shift+x",
     },
 }
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+LOG_PATH = REPO_ROOT / "ghostmind.log"
+
+
+def _setup_logging() -> None:
+    """Configure logging to console + rotating file (1 MB, keep 3 backups)."""
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+
+    # Console handler
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    root.addHandler(console)
+
+    # File handler (rotating, max 1 MB x 3)
+    try:
+        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            LOG_PATH, maxBytes=1_000_000, backupCount=3, encoding="utf-8"
+        )
+        file_handler.setFormatter(fmt)
+        root.addHandler(file_handler)
+    except Exception as e:
+        print(f"Warning: Could not create log file: {e}")
+
+
+_setup_logging()
 logger = logging.getLogger("ghostmind")
 
 
@@ -154,6 +251,7 @@ class GhostMindController(QObject):
         self.hotkeys.toggle_subtitles.connect(self.overlay.toggle_subtitles_tab)
         self.hotkeys.export_transcript.connect(self.export_transcript)
         self.overlay.export_requested.connect(self.export_transcript)
+        self.hotkeys.toggle_click_through.connect(self._toggle_click_through)
 
         self._register_hotkeys()
         self._start_audio_if_needed()
@@ -166,6 +264,7 @@ class GhostMindController(QObject):
             str(hk.get("clear_answers", "ctrl+shift+c")),
             str(hk.get("toggle_subtitles", "ctrl+shift+t")),
             str(hk.get("export_transcript", "ctrl+shift+e")),
+            str(hk.get("toggle_click_through", "ctrl+shift+x")),
         )
 
     def _on_settings_changed(self, data: Dict[str, Any]) -> None:
@@ -203,7 +302,8 @@ class GhostMindController(QObject):
 
     def _on_audio_failed(self, msg: str) -> None:
         logger.error("Audio: %s", msg)
-        QMessageBox.warning(self.overlay, "GhostMind audio", msg)
+        # Show a user-friendly message in the answer panel
+        self.overlay._answer_panel.end_stream_error(f"Audio: {msg}")
 
     def _on_subtitle_line(self, line: str) -> None:
         self.overlay.push_subtitle_line(line)
@@ -226,6 +326,21 @@ class GhostMindController(QObject):
     def _tray_quit(self) -> None:
         self._tray.hide()
         self._app.quit()
+
+    def _toggle_click_through(self) -> None:
+        """Toggle click-through mode on/off with a hotkey."""
+        current = bool(self.settings.get("click_through", False))
+        new_val = not current
+        self.settings["click_through"] = new_val
+        save_settings(self.settings)
+        self.overlay.apply_settings(self.settings)
+        mode = "ON (clicks pass through)" if new_val else "OFF (clicks interact)"
+        self._tray.showMessage(
+            "GhostMind",
+            f"Click-through: {mode}",
+            QSystemTrayIcon.MessageIcon.Information,
+            2000,
+        )
 
     # --- transcript export ---
     def export_transcript(self) -> None:
@@ -315,6 +430,19 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("GhostMind")
     app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
+
+    # Startup dependency check
+    warnings = check_dependencies()
+    if warnings:
+        msg = (
+            "GhostMind detected missing dependencies:\n\n"
+            + "\n\n".join(warnings)
+            + "\n\n"
+            "The app will start but some features may be unavailable."
+        )
+        QTimer.singleShot(200, lambda: QMessageBox.warning(
+            None, "GhostMind — Dependency Warnings", msg
+        ))
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)

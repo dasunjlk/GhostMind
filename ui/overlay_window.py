@@ -18,7 +18,7 @@ from PyQt6.QtCore import (
     QEvent,
     pyqtSignal,
 )
-from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QMouseEvent
+from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -297,12 +297,28 @@ class OverlayWindow(QMainWindow):
 
     def _on_scan_done(self, text: str) -> None:
         if not text.strip():
-            self._answer_panel.end_stream_error("OCR returned no text.")
+            self._answer_panel.end_stream_error(
+                "OCR returned no text. The screen may be blank or Tesseract could not read it."
+            )
             return
         self._start_ai(text, "screen")
 
     def _on_scan_fail(self, err: str) -> None:
-        self._answer_panel.end_stream_error(f"OCR / capture error: {err}")
+        # Provide a user-friendly message based on the error
+        msg = str(err)
+        if "pytesseract" in msg.lower() or "tesseract" in msg.lower():
+            friendly = (
+                "Screen scan failed: Tesseract OCR is not available.\n\n"
+                "Install Tesseract: choco install tesseract\n"
+                "Then restart GhostMind."
+            )
+        elif "mss" in msg.lower():
+            friendly = (
+                "Screen capture failed. Check that the monitor ID is correct in Settings."
+            )
+        else:
+            friendly = f"Screen scan error: {msg}"
+        self._answer_panel.end_stream_error(friendly)
 
     def _start_ai(self, content: str, context_type: str) -> None:
         if self._ai_worker and self._ai_worker.isRunning():
@@ -444,6 +460,28 @@ class OverlayWindow(QMainWindow):
             self.closeRequested.emit()
         else:
             super().closeEvent(e)
+
+    def keyPressEvent(self, e: QKeyEvent) -> None:
+        """Handle keyboard navigation within the overlay."""
+        key = e.key()
+        # Escape: close settings if open, otherwise hide overlay
+        if key == Qt.Key.Key_Escape:
+            if self._stack.currentIndex() == 1:
+                self._toggle_settings()
+            else:
+                self._minimize_hide()
+            return
+        # Tab: cycle focus between tabs
+        if key == Qt.Key.Key_Tab:
+            idx = self._tabs.currentIndex()
+            self._tabs.setCurrentIndex((idx + 1) % self._tabs.count())
+            return
+        # Backtab: cycle tabs in reverse
+        if key == Qt.Key.Key_Backtab:
+            idx = self._tabs.currentIndex()
+            self._tabs.setCurrentIndex((idx - 1) % self._tabs.count())
+            return
+        super().keyPressEvent(e)
 
     def leaveEvent(self, e) -> None:
         self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
