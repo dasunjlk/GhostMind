@@ -12,7 +12,8 @@ from typing import Any, Dict, Optional
 import toml
 from dotenv import load_dotenv
 from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
+from PyQt6.QtWidgets import QApplication, QMenu, QMessageBox, QSystemTrayIcon
 
 from core.audio_listener import AudioListener
 from ui.overlay_window import OverlayWindow
@@ -69,8 +70,28 @@ def save_settings(data: Dict[str, Any]) -> None:
         toml.dump(to_save, f)
 
 
+def _create_tray_icon() -> QIcon:
+    """Create a green-circle tray icon with 'G' letter programmatically."""
+    size = 64
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    # Green circle background
+    painter.setBrush(QColor("#00FF88"))
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.drawEllipse(2, 2, size - 4, size - 4)
+    # Dark 'G' letter
+    painter.setPen(QPen(QColor("#0A0A0A"), 0))
+    font = QFont("Segoe UI", 30, QFont.Weight.Bold)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "G")
+    painter.end()
+    return QIcon(pixmap)
+
+
 class GhostMindController(QObject):
-    """Owns hotkeys, audio thread, and settings persistence."""
+    """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
     def __init__(self, app: QApplication, settings: Dict[str, Any]) -> None:
         super().__init__()
@@ -83,6 +104,34 @@ class GhostMindController(QObject):
         self._meeting_timer = QTimer(self)
         self._meeting_timer.setSingleShot(True)
         self._meeting_timer.timeout.connect(self._flush_meeting_question)
+
+        # --- System tray ---
+        self._tray = QSystemTrayIcon(self)
+        self._tray.setIcon(_create_tray_icon())
+        self._tray.setToolTip("GhostMind")
+
+        tray_menu = QMenu()
+        show_action = QAction("Show overlay", self)
+        show_action.triggered.connect(self._tray_show)
+        tray_menu.addAction(show_action)
+
+        hide_action = QAction("Hide overlay", self)
+        hide_action.triggered.connect(self._tray_hide)
+        tray_menu.addAction(hide_action)
+
+        tray_menu.addSeparator()
+
+        quit_action = QAction("Quit", self)
+        quit_action.triggered.connect(self._tray_quit)
+        tray_menu.addAction(quit_action)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+        # Close button hides to tray instead of quitting
+        self.overlay.close_event_allowed = False
+        self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
 
@@ -144,6 +193,23 @@ class GhostMindController(QObject):
         self.overlay.push_subtitle_line(line)
         if "?" in line:
             self._meeting_timer.start(1600)
+
+    # --- tray actions ---
+    def _tray_show(self) -> None:
+        if not self.overlay.isVisible():
+            self.overlay.toggle_visibility_animated()
+
+    def _tray_hide(self) -> None:
+        if self.overlay.isVisible():
+            self.overlay.toggle_visibility_animated()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.overlay.toggle_visibility_animated()
+
+    def _tray_quit(self) -> None:
+        self._tray.hide()
+        self._app.quit()
 
     def _flush_meeting_question(self) -> None:
         if self._audio is None:

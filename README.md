@@ -1,6 +1,6 @@
 # GhostMind
 
-GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **Claude** (Anthropic) for concise answers inside the app.
+GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **Groq** (Llama 3.1 70B) for concise answers inside the app.
 
 ## Features
 
@@ -9,7 +9,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` for capture exclusion; optional `DWMWA_CLOAK` via settings (normally hides the window locally—off by default)
 - Screen capture across monitors (`mss`) + Tesseract OCR + optional OpenCV preprocessing
 - Local speech-to-text with **faster-whisper**; optional WASAPI loopback for system audio
-- Claude **Sonnet 4** with streaming replies and markdown-like rendering in the answer panel
+- **Llama 3.1 70B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
 - Global hotkeys via the `keyboard` library
 - Settings stored in `config/settings.toml` (created on first save; file is gitignored)
 
@@ -22,7 +22,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
   Install example (Chocolatey): `choco install tesseract`  
   Or download the Windows installer from the UB Mannheim / GitHub Tesseract releases and add the install folder to `PATH`.
 
-- **Anthropic API key** in `.env` as `ANTHROPIC_API_KEY`
+- **Groq API key** in `.env` as `GROQ_API_KEY` (free tier available at [console.groq.com](https://console.groq.com))
 
 ### Optional: faster GPU for Whisper
 
@@ -37,7 +37,7 @@ python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
 copy .env.example .env
-# Edit .env — set ANTHROPIC_API_KEY
+# Edit .env — set GROQ_API_KEY
 ```
 
 ### Fonts (optional)
@@ -63,8 +63,8 @@ python main.py
 | Clear answers | `Ctrl+Shift+C` |
 | Switch Answers ↔ Subtitles tab | `Ctrl+Shift+T` |
 
-- **Answers** tab: shows streamed Claude output with copy per block.
-- **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` schedule a short debounce, then the recent transcript is sent to Claude as **meeting** context (the model decides whether to answer or summarize).
+- **Answers** tab: shows streamed Llama output with copy per block.
+- **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` schedule a short debounce, then the recent transcript is sent to Llama as **meeting** context (the model decides whether to answer or summarize).
 
 Use the **green** header dot to open settings (saved to `config/settings.toml`).
 
@@ -95,7 +95,7 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
   Install Tesseract and ensure `tesseract` is on `PATH`, or set `pytesseract.pytesseract.tesseract_cmd` in code if you use a custom location.
 
 - **Invalid / missing API key**  
-  Check `.env` and use **Test** in settings (or verify in the Anthropic console). The model id used is `claude-sonnet-4-20250514`.
+  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The model id used is `llama-3.1-70b-versatile`.
 
 - **No microphone or loopback device**  
   Grant microphone permission on Windows. Loopback requires a WASAPI loopback-capable device; if none is found, only mic capture runs (see log messages).
@@ -136,8 +136,8 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
         |
         v
  +-------------+     +------------------+
- | AiStream    |<--->| Anthropic API    |
- | Worker      |     | (streaming)      |
+ | AiStream    |<--->| Groq API         |
+ | Worker      |     | (Llama 3.1 70B)  |
  +-------------+     +------------------+
 
  +------------------+       +-------------------+
