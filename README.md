@@ -171,10 +171,10 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
          | signals            | subtitle_updated
          v                    v
 +-------------------------------------------------------------+
-|                     OverlayWindow (QMainWindow)              |
-|  stealth.apply_stealth(hwnd) on show / move / resize         |
-|  + Header (drag) + Tabs (Answers | Subtitles) + Settings   |
-+-------+------------------------------------+---------------+
+|                     OverlayWindow (QMainWindow)             |
+|  stealth.apply_stealth(hwnd) on show / move / resize        |
+|  + Header (drag) + Tabs (Answers | Subtitles) + Settings    |
++-------+------------------------------------+----------------+
         |                                    |
         v                                    v
  +-------------+                     +---------------+
@@ -191,7 +191,7 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
         v
  +-------------+     +------------------+
  | AiStream    |<--->| Groq API         |
- | Worker      |     | (Llama 3.1 70B)  |
+ | Worker      |     | (qwen3.8-27b)    |
  +-------------+     +------------------+
 
  +------------------+       +-------------------+

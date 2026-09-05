@@ -99,6 +99,7 @@ class OverlayWindow(QMainWindow):
     settings_changed = pyqtSignal(dict)
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
+    summarize_meeting_requested = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -127,18 +128,27 @@ class OverlayWindow(QMainWindow):
         if ico_path.is_file():
             self.setWindowIcon(QIcon(str(ico_path)))
 
+        # Outer transparent container with 2px inset margin to prevent DWM border bleed
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        c_layout = QVBoxLayout(container)
+        c_layout.setContentsMargins(2, 2, 2, 2)
+        c_layout.setSpacing(0)
+
         central = QWidget()
         central.setObjectName("ghostPanel")
         central.setStyleSheet(
-            "#ghostPanel { background: rgba(10,10,10,200); border: 1px solid #00FF88; "
+            "#ghostPanel { background: rgba(10,10,10,225); border: 1px solid #00FF88; "
             "border-radius: 8px; }"
         )
-        self.setCentralWidget(central)
+        c_layout.addWidget(central)
+        self.setCentralWidget(container)
 
         root = QVBoxLayout(central)
         root.setContentsMargins(1, 1, 1, 1)
         root.setSpacing(0)
 
+        # Header Bar
         header = QWidget()
         header.setFixedHeight(36)
         header.setStyleSheet("background:#141414; border-top-left-radius:7px; border-top-right-radius:7px;")
@@ -147,28 +157,41 @@ class OverlayWindow(QMainWindow):
 
         title = QLabel(" GhostMind")
         title.setStyleSheet("color:#00FF88; font-weight: bold;")
+        _families = QFontDatabase.families()
         ui_font = QFont("Inter", 11)
-        if QFontDatabase.hasFamily("Inter"):
+        if "Inter" in _families:
             pass
-        elif QFontDatabase.hasFamily("DM Sans"):
+        elif "DM Sans" in _families:
             ui_font = QFont("DM Sans", 11)
         else:
             ui_font = QFont("Segoe UI", 11)
         title.setFont(ui_font)
 
         btn_close = _RoundCtl("#FF4444")
+        btn_close.setToolTip("Hide to Tray")
         btn_close.clicked.connect(self.close)
+
         btn_min = _RoundCtl("#FFD54F")
+        btn_min.setToolTip("Minimize")
         btn_min.clicked.connect(self._minimize_hide)
-        btn_set = _RoundCtl("#00FF88")
+
+        # Settings Gear Icon Button
+        btn_set = QPushButton("⚙")
+        btn_set.setToolTip("Settings")
+        btn_set.setFixedSize(26, 26)
+        btn_set.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_set.setStyleSheet(
+            "QPushButton { background: transparent; color: #888888; border: none; font-size: 15px; border-radius: 4px; padding-bottom: 2px; }"
+            "QPushButton:hover { background: #222222; color: #00FF88; }"
+        )
         btn_set.clicked.connect(self._toggle_settings)
 
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
-        hl.addWidget(btn_set)
         hl.addSpacing(8)
         hl.addWidget(title)
         hl.addStretch(1)
+        hl.addWidget(btn_set)
 
         root.addWidget(header)
 
@@ -191,7 +214,7 @@ class OverlayWindow(QMainWindow):
         sub_host = QWidget()
         sl = QVBoxLayout(sub_host)
         sl.setContentsMargins(0, 0, 0, 0)
-        hint = QLabel("Live transcription (Mic / System). Questions highlighted in gold.")
+        hint = QLabel("Live transcription (Mic / System / Lecturer). Questions highlighted in gold.")
         hint.setStyleSheet("color:#888;font-size:11px;")
         sl.addWidget(hint)
         sl.addWidget(self._subtitle_bar, 1)
@@ -203,8 +226,10 @@ class OverlayWindow(QMainWindow):
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
+        self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
+        self._subtitle_bar.summarize_requested.connect(self.summarize_meeting_requested.emit)
 
         self._stack.addWidget(self._main_page)
         self._stack.addWidget(self._settings_panel)
@@ -213,7 +238,7 @@ class OverlayWindow(QMainWindow):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._trigger_scan)
 
-        self._opacity_anim: Optional[QPropertyAnimation] = None
+        self._opacity_anim: Optional[QVariantAnimation] = None
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
 
         self._header_drag = _HeaderDragFilter(self)
@@ -243,15 +268,17 @@ class OverlayWindow(QMainWindow):
             self._fade_to(0.0, hide_on_finish=True)
 
     def request_ai_answer(self, content: str, context_type: str = "screen") -> None:
-        """Run Claude on arbitrary text (e.g. meeting transcript)."""
+        """Run Groq on arbitrary text (e.g. meeting question or transcript)."""
         if not (content or "").strip():
             return
+        self._tabs.setCurrentIndex(0)
         self._start_ai(content.strip(), context_type)
 
     def trigger_screen_scan(self) -> None:
         if self._scan_worker and self._scan_worker.isRunning():
             return
         mid = int(self._settings.get("monitor_id", 1))
+        self._tabs.setCurrentIndex(0)
         self._answer_panel.start_thinking()
         self._scan_worker = ScreenScanWorker(mid)
         self._scan_worker.finished_ok.connect(self._on_scan_done)
@@ -304,7 +331,6 @@ class OverlayWindow(QMainWindow):
         self._start_ai(text, "screen")
 
     def _on_scan_fail(self, err: str) -> None:
-        # Provide a user-friendly message based on the error
         msg = str(err)
         if "pytesseract" in msg.lower() or "tesseract" in msg.lower():
             friendly = (
@@ -327,8 +353,10 @@ class OverlayWindow(QMainWindow):
             self._answer_panel.stop_thinking()
             self._answer_panel.end_stream_error("Already processing another answer.")
             return
+
+        model_id = str(self._settings.get("ai_model", "llama-3.3-70b-versatile"))
         self._answer_panel.begin_answer_stream()
-        self._ai_worker = AiStreamWorker(content, context_type)
+        self._ai_worker = AiStreamWorker(content, context_type, model_id=model_id)
         self._ai_worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
         self._ai_worker.finished_ok.connect(self._answer_panel.end_stream_success)
         self._ai_worker.failed.connect(self._answer_panel.end_stream_error)
@@ -336,7 +364,7 @@ class OverlayWindow(QMainWindow):
         self._ai_worker.start()
 
     def _apply_window_opacity(self, op: float) -> None:
-        op = max(0.5, min(1.0, float(op)))
+        op = max(0.20, min(1.0, float(op)))
         self.setWindowOpacity(op)
 
     def _fade_to(self, target: float, hide_on_finish: bool = False) -> None:
@@ -370,7 +398,7 @@ class OverlayWindow(QMainWindow):
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
-        QTimer.singleShot(0, self._reapply_stealth)
+        QTimer.singleShot(50, self._reapply_stealth)
 
     def moveEvent(self, e) -> None:
         super().moveEvent(e)
@@ -464,19 +492,16 @@ class OverlayWindow(QMainWindow):
     def keyPressEvent(self, e: QKeyEvent) -> None:
         """Handle keyboard navigation within the overlay."""
         key = e.key()
-        # Escape: close settings if open, otherwise hide overlay
         if key == Qt.Key.Key_Escape:
             if self._stack.currentIndex() == 1:
                 self._toggle_settings()
             else:
                 self._minimize_hide()
             return
-        # Tab: cycle focus between tabs
         if key == Qt.Key.Key_Tab:
             idx = self._tabs.currentIndex()
             self._tabs.setCurrentIndex((idx + 1) % self._tabs.count())
             return
-        # Backtab: cycle tabs in reverse
         if key == Qt.Key.Key_Backtab:
             idx = self._tabs.currentIndex()
             self._tabs.setCurrentIndex((idx - 1) % self._tabs.count())

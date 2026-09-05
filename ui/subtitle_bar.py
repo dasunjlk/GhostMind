@@ -1,5 +1,5 @@
 """
-Live subtitle ticker: last few lines, question highlighting, Mic/System labels.
+Live subtitle ticker: last few lines, question highlighting, Mic/System/Lecturer labels, and summarize action.
 """
 from __future__ import annotations
 
@@ -25,10 +25,11 @@ _QUESTION_RE = re.compile(
 
 class SubtitleBar(QWidget):
     save_requested = pyqtSignal()
+    summarize_requested = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._lines: Deque[str] = deque(maxlen=6)
+        self._lines: Deque[str] = deque(maxlen=8)
         self._view = QTextEdit()
         self._view.setReadOnly(True)
         self._view.setFrameShape(QFrame.Shape.NoFrame)
@@ -47,11 +48,23 @@ class SubtitleBar(QWidget):
         hint.setStyleSheet("color:#555;font-size:10px;")
         header.addWidget(hint)
         header.addStretch(1)
+
+        sum_btn = QPushButton("⚡ Summarize")
+        sum_btn.setToolTip("Summarize audio discussion / lecture")
+        sum_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sum_btn.setStyleSheet(
+            "QPushButton { background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:3px 10px; font-size:11px; border-radius:3px; }"
+            "QPushButton:hover { background:#1E3E2B; }"
+        )
+        sum_btn.clicked.connect(self.summarize_requested.emit)
+        header.addWidget(sum_btn)
+        header.addSpacing(6)
+
         save_btn = QPushButton("Save")
         save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         save_btn.setStyleSheet(
-            "QPushButton { background:#1A1A1A;color:#00FF88;border:none;padding:3px 10px;" font-size:11px; }"
-            "QPushButton:hover { background:#252525; }"
+            "QPushButton { background:#1A1A1A;color:#E0E0E0;border:1px solid #333;padding:3px 10px; font-size:11px; border-radius:3px; }"
+            "QPushButton:hover { background:#252525;color:#FFF; }"
         )
         save_btn.clicked.connect(self.save_requested.emit)
         header.addWidget(save_btn)
@@ -73,7 +86,7 @@ class SubtitleBar(QWidget):
         self._view.clear()
 
     def _render(self) -> None:
-        visible = list(self._lines)[-4:]
+        visible = list(self._lines)[-5:]
         self._view.clear()
         cursor = self._view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -83,6 +96,9 @@ class SubtitleBar(QWidget):
 
         label_fmt = QTextCharFormat()
         label_fmt.setForeground(QColor("#00FF88"))
+
+        lecturer_fmt = QTextCharFormat()
+        lecturer_fmt.setForeground(QColor("#40C4FF"))
 
         question_fmt = QTextCharFormat()
         question_fmt.setForeground(QColor("#FFD700"))
@@ -94,9 +110,12 @@ class SubtitleBar(QWidget):
                 speaker, rest = "Mic", ln[4:].strip()
             elif ln.startswith("System:"):
                 speaker, rest = "System", ln[7:].strip()
+            elif ln.startswith("Lecturer:"):
+                speaker, rest = "Lecturer", ln[9:].strip()
 
             if speaker:
-                cursor.setCharFormat(label_fmt)
+                fmt = lecturer_fmt if speaker == "Lecturer" else label_fmt
+                cursor.setCharFormat(fmt)
                 cursor.insertText(f"{speaker}: ")
             is_q = "?" in rest or bool(_QUESTION_RE.search(rest))
             cursor.setCharFormat(question_fmt if is_q else normal)

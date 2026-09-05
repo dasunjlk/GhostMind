@@ -38,6 +38,9 @@ WDA_EXCLUDEFROMCAPTURE = 0x00000011
 # DWM attributes (Desktop Window Manager)
 DWMWA_CLOAK = 14
 
+# HRESULT is a COM 32-bit signed integer; not present in ctypes.wintypes on all builds
+HRESULT = ctypes.c_long
+
 SetWindowDisplayAffinity = user32.SetWindowDisplayAffinity
 SetWindowDisplayAffinity.argtypes = [wintypes.HWND, wintypes.DWORD]
 SetWindowDisplayAffinity.restype = wintypes.BOOL
@@ -60,7 +63,7 @@ try:
         ctypes.c_void_p,
         wintypes.DWORD,
     ]
-    _DwmSetWindowAttribute.restype = wintypes.HRESULT
+    _DwmSetWindowAttribute.restype = HRESULT
 except OSError:  # pragma: no cover
     dwmapi = None
     _DwmSetWindowAttribute = None
