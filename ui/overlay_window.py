@@ -85,15 +85,30 @@ class _HeaderDragFilter(QObject):
 
 
 class _RoundCtl(QPushButton):
-    def __init__(self, color: str, parent=None) -> None:
+    def __init__(self, color: str, hover_color: str = "", parent=None) -> None:
         super().__init__(parent)
         self._color = color
         self.setFixedSize(12, 12)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
+        hover = hover_color or color
         self.setStyleSheet(
             f"QPushButton {{ background:{color}; border-radius:6px; border:none; }}"
-            f"QPushButton:hover {{ background:{color}; filter: brightness(1.15); }}"
+            f"QPushButton:hover {{ background:{hover}; }}"
         )
+
+
+def _is_worker_active(worker: Optional[QThread]) -> bool:
+    """Safely check if a QThread worker is alive without triggering C++ deleted object errors."""
+    if worker is None:
+        return False
+    try:
+        from PyQt6 import sip
+        if sip.isdeleted(worker):
+            return False
+        return bool(worker.isRunning())
+    except (RuntimeError, ReferenceError):
+        return False
+
 
 
 class OverlayWindow(QMainWindow):
@@ -168,13 +183,14 @@ class OverlayWindow(QMainWindow):
             ui_font = QFont("Segoe UI", 11)
         title.setFont(ui_font)
 
-        btn_close = _RoundCtl("#FF4444")
+        btn_close = _RoundCtl("#FF4444", "#FF6B6B")
         btn_close.setToolTip("Hide to Tray")
         btn_close.clicked.connect(self.close)
 
-        btn_min = _RoundCtl("#FFD54F")
+        btn_min = _RoundCtl("#FFD54F", "#FFE082")
         btn_min.setToolTip("Minimize")
         btn_min.clicked.connect(self._minimize_hide)
+
 
         # Settings Gear Icon Button
         btn_set = QPushButton("⚙")
@@ -276,15 +292,23 @@ class OverlayWindow(QMainWindow):
         self._start_ai(content.strip(), context_type)
 
     def trigger_screen_scan(self) -> None:
-        if self._scan_worker and self._scan_worker.isRunning():
+        if _is_worker_active(self._scan_worker):
             return
         mid = int(self._settings.get("monitor_id", 1))
         self._tabs.setCurrentIndex(0)
         self._answer_panel.start_thinking()
-        self._scan_worker = ScreenScanWorker(mid)
-        self._scan_worker.finished_ok.connect(self._on_scan_done)
-        self._scan_worker.failed.connect(self._on_scan_fail)
-        self._scan_worker.start()
+        worker = ScreenScanWorker(mid)
+        self._scan_worker = worker
+
+        def _cleanup_scan() -> None:
+            if self._scan_worker is worker:
+                self._scan_worker = None
+
+        worker.finished.connect(_cleanup_scan)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished_ok.connect(self._on_scan_done)
+        worker.failed.connect(self._on_scan_fail)
+        worker.start()
 
     def clear_answers(self) -> None:
         self._answer_panel.clear_all()
@@ -348,7 +372,7 @@ class OverlayWindow(QMainWindow):
         self._answer_panel.end_stream_error(friendly)
 
     def _start_ai(self, content: str, context_type: str) -> None:
-        if self._ai_worker and self._ai_worker.isRunning():
+        if _is_worker_active(self._ai_worker):
             if context_type == "meeting_audio":
                 return
             self._answer_panel.stop_thinking()
@@ -358,12 +382,20 @@ class OverlayWindow(QMainWindow):
         model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
 
         self._answer_panel.begin_answer_stream()
-        self._ai_worker = AiStreamWorker(content, context_type, model_id=model_id)
-        self._ai_worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
-        self._ai_worker.finished_ok.connect(self._answer_panel.end_stream_success)
-        self._ai_worker.failed.connect(self._answer_panel.end_stream_error)
-        self._ai_worker.finished.connect(self._ai_worker.deleteLater)
-        self._ai_worker.start()
+        worker = AiStreamWorker(content, context_type, model_id=model_id)
+        self._ai_worker = worker
+
+        def _cleanup_ai() -> None:
+            if self._ai_worker is worker:
+                self._ai_worker = None
+
+        worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
+        worker.finished_ok.connect(self._answer_panel.end_stream_success)
+        worker.failed.connect(self._answer_panel.end_stream_error)
+        worker.finished.connect(_cleanup_ai)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
 
     def _apply_window_opacity(self, op: float) -> None:
         op = max(0.20, min(1.0, float(op)))

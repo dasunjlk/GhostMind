@@ -157,3 +157,21 @@ class TestSubtitleBarFeatures:
         assert "Testing microphone" in plain
         assert "important theorem" in plain
         assert "Someone is speaking" in plain
+
+
+class TestWorkerSafety:
+    def test_is_worker_active_none(self):
+        from ui.overlay_window import _is_worker_active
+        assert _is_worker_active(None) is False
+
+    def test_is_worker_active_deleted(self, qapp):
+        from PyQt6.QtCore import QThread
+        from ui.overlay_window import _is_worker_active
+        worker = QThread()
+        # Delete underlying C++ object
+        worker.deleteLater()
+        qapp.processEvents()
+        # Should return False safely without raising RuntimeError
+        assert _is_worker_active(worker) is False
+
+
