@@ -1,13 +1,14 @@
 """
-Groq API integration (Llama 3.1 70B) with prompt routing and streaming via background worker.
+Groq API integration with prompt routing, fast streaming, and structured formatting.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
@@ -19,26 +20,54 @@ try:
 except ImportError:  # pragma: no cover
     Groq = None  # type: ignore
 
-MODEL_ID = "llama-3.1-70b-versatile"
+# Supported Models
+DEFAULT_MODEL = "qwen/qwen3.8-27b"
+MODEL_ID = DEFAULT_MODEL
+BACKUP_MODELS: List[str] = [
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+]
+
+AVAILABLE_MODELS: List[Tuple[str, str]] = [
+    ("qwen/qwen3.8-27b", "Qwen 3.8 27B (Default)"),
+    ("qwen/qwen3.6-27b", "Qwen 3.6 27B (Backup)"),
+    ("openai/gpt-oss-120b", "GPT-OSS 120B"),
+    ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
+]
+
 MAX_TOKENS = 1024
 
 BASE_SYSTEM = (
-    "You are GhostMind, a silent AI assistant. Respond concisely and clearly. "
-    "Format your answer appropriately: use bullet points for lists, numbered steps "
-    "for procedures, code blocks (wrapped in triple backticks with language tag) for code, "
-    "and plain paragraphs for conversational answers. Never include preamble like 'Sure!' "
-    "or 'Great question!'. Get straight to the answer."
+    "You are GhostMind, a silent stealth AI assistant. Respond concisely, accurately, and clearly. "
+    "Get straight to the answer without conversational preamble (e.g. no 'Sure!', 'Here is', 'Certainly'). "
+    "Use bullet points for lists, numbered steps for procedures, and code blocks with language tags for code."
 )
 
 
 def _classify_screen_text(content: str) -> str:
     c = content.lower()
-    if any(k in c for k in ["a)", "b)", "c)", "d)", "multiple choice", "select one"]):
+    # MCQ / Quiz detection
+    mcq_patterns = [
+        r"\b[a-d]\s*[\)\.\:]",
+        r"\([a-d]\)",
+        r"\[[a-d]\]",
+        r"multiple\s+choice",
+        r"select\s+(one|the\s+best|all|correct)",
+        r"which\s+of\s+the\s+following",
+        r"true\s+or\s+false",
+    ]
+    if any(re.search(p, c) for p in mcq_patterns) or any(k in c for k in ["a)", "b)", "c)", "d)", "multiple choice", "select one"]):
         return "quiz_mcq"
-    if any(k in c for k in ["def ", "class ", "import ", "function", "```", "leetcode"]):
+
+    # Coding detection
+    if any(k in c for k in ["def ", "class ", "import ", "function", "```", "leetcode", "return ", "public static void"]):
         return "coding"
+
+    # Question detection
     if "?" in content and len(content) < 4000:
         return "question"
+
     return "general"
 
 
@@ -46,7 +75,9 @@ def _screen_system_addon(kind: str) -> str:
     if kind == "quiz_mcq":
         return (
             " The user pasted screen text that looks like a quiz or multiple-choice question. "
-            "Identify the best answer with a short justification."
+            "Identify the best answer with a short justification. Format your response strictly as:\n"
+            "**Answer:** [Option Letter/Number] Option Text\n"
+            "**Explanation:** 1-2 concise sentences explaining why this is correct."
         )
     if kind == "coding":
         return (
@@ -66,16 +97,44 @@ def _meeting_system_block() -> str:
     )
 
 
+def _lecture_system_block() -> str:
+    return (
+        BASE_SYSTEM
+        + " You are given a lecture or class transcript. Structure your output clearly:\n"
+        "# Lecture Summary\n"
+        "## Core Concepts\n"
+        "Bullet points of what the lecturer is explaining.\n"
+        "## Key Takeaways & Definitions\n"
+        "Definitions, formulas, or critical points mentioned."
+    )
+
+
+def _meeting_question_system_block() -> str:
+    return (
+        BASE_SYSTEM
+        + " The user is in a live meeting and a direct question was asked by a participant or speaker. "
+        "Provide a direct, high-value, factual answer immediately in 1-3 sentences. No fluff."
+    )
+
+
 def build_system_prompt(context_type: str, content: str) -> str:
     if context_type == "meeting_audio":
         return _meeting_system_block()
+    if context_type == "meeting_question":
+        return _meeting_question_system_block()
+    if context_type in ("lecture_notes", "lecture_audio"):
+        return _lecture_system_block()
     kind = _classify_screen_text(content)
     return BASE_SYSTEM + _screen_system_addon(kind)
 
 
 def build_user_message(context_type: str, content: str) -> str:
-    if context_type == "meeting_audio":
+    if context_type in ("meeting_audio", "meeting_summary"):
         return f"Transcript (may be partial):\n\n{content}"
+    if context_type == "meeting_question":
+        return f"Live Question asked during meeting:\n\n{content}"
+    if context_type in ("lecture_notes", "lecture_audio"):
+        return f"Lecture audio transcript:\n\n{content}"
     return f"Screen OCR text:\n\n{content}"
 
 
@@ -95,22 +154,56 @@ def _get_client() -> Groq:
     return Groq(api_key=key)
 
 
-async def generate_answer(content: str, context_type: str = "screen") -> str:
+def get_token_limit_for_context(context_type: str, content: str) -> int:
+    """Choose optimal max_tokens to minimize latency."""
+    if context_type == "meeting_question":
+        return 350
+    kind = _classify_screen_text(content)
+    if kind == "quiz_mcq":
+        return 450
+    if context_type in ("lecture_notes", "lecture_audio", "meeting_summary"):
+        return 1200
+    return MAX_TOKENS
+
+
+async def generate_answer(
+    content: str,
+    context_type: str = "screen",
+    model_id: Optional[str] = None,
+) -> str:
     """Async API call (non-streaming); used for tests or direct await."""
     client = _get_client()
     system = build_system_prompt(context_type, content)
     user_msg = build_user_message(context_type, content)
-    msg = await asyncio.to_thread(
-        lambda: client.chat.completions.create(
-            model=MODEL_ID,
-            max_tokens=MAX_TOKENS,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ],
-        )
-    )
-    return (msg.choices[0].message.content or "").strip()
+    max_tokens = get_token_limit_for_context(context_type, content)
+    primary = model_id or MODEL_ID
+    models_to_try = [primary] + [m for m in BACKUP_MODELS if m != primary]
+    last_err: Optional[Exception] = None
+
+    for model in models_to_try:
+        try:
+            msg = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ],
+                )
+            )
+            return (msg.choices[0].message.content or "").strip()
+        except Exception as e:
+            last_err = e
+            err_str = str(e).lower()
+            if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str:
+                continue
+            raise
+
+    if last_err:
+        raise last_err
+    return ""
 
 
 class AiStreamWorker(QThread):
@@ -118,10 +211,17 @@ class AiStreamWorker(QThread):
     finished_ok = pyqtSignal()
     failed = pyqtSignal(str)
 
-    def __init__(self, content: str, context_type: str, parent: Optional[QObject] = None) -> None:
+    def __init__(
+        self,
+        content: str,
+        context_type: str,
+        model_id: Optional[str] = None,
+        parent: Optional[QObject] = None,
+    ) -> None:
         super().__init__(parent)
         self._content = content
         self._context_type = context_type
+        self._model_id = model_id or MODEL_ID
 
     def run(self) -> None:
         try:
@@ -136,40 +236,54 @@ class AiStreamWorker(QThread):
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ]
+        max_tokens = get_token_limit_for_context(self._context_type, self._content)
 
-        attempts = 0
+        models_to_try = [self._model_id] + [m for m in BACKUP_MODELS if m != self._model_id]
         last_err: Optional[Exception] = None
-        while attempts < 3:
-            attempts += 1
-            try:
-                stream = client.chat.completions.create(
-                    model=MODEL_ID,
-                    max_tokens=MAX_TOKENS,
-                    messages=messages,
-                    stream=True,
-                )
-                for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        self.chunk_received.emit(chunk.choices[0].delta.content)
-                self.finished_ok.emit()
-                return
-            except Exception as e:
-                last_err = e
-                logger.warning("Groq stream failed (attempt %s): %s", attempts, e)
-                # Fallback: non-streaming request
+
+        for model in models_to_try:
+            attempts = 0
+            while attempts < 2:
+                attempts += 1
                 try:
-                    resp = client.chat.completions.create(
-                        model=MODEL_ID,
-                        max_tokens=MAX_TOKENS,
+                    stream = client.chat.completions.create(
+                        model=model,
+                        max_tokens=max_tokens,
+                        temperature=0.3,
                         messages=messages,
+                        stream=True,
                     )
-                    body = (resp.choices[0].message.content or "").strip()
-                    if body:
-                        self.chunk_received.emit(body)
+                    for chunk in stream:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            self.chunk_received.emit(chunk.choices[0].delta.content)
                     self.finished_ok.emit()
                     return
-                except Exception as e2:
-                    last_err = e2
-                    logger.warning("Groq non-stream fallback failed: %s", e2)
-                time.sleep(0.75 * attempts)
+                except Exception as e:
+                    last_err = e
+                    logger.warning("Groq stream with model %s failed (attempt %s): %s", model, attempts, e)
+                    err_str = str(e).lower()
+                    if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
+                        logger.warning("Model %s not found/accessible, trying next model...", model)
+                        break
+                    # Fallback: non-streaming request
+                    try:
+                        resp = client.chat.completions.create(
+                            model=model,
+                            max_tokens=max_tokens,
+                            temperature=0.3,
+                            messages=messages,
+                        )
+                        body = (resp.choices[0].message.content or "").strip()
+                        if body:
+                            self.chunk_received.emit(body)
+                        self.finished_ok.emit()
+                        return
+                    except Exception as e2:
+                        last_err = e2
+                        logger.warning("Groq non-stream fallback with model %s failed: %s", model, e2)
+                        err_str2 = str(e2).lower()
+                        if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
+                            break
+                    time.sleep(0.3 * attempts)
+
         self.failed.emit(str(last_err) if last_err else "Unknown API error")

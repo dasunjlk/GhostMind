@@ -9,7 +9,8 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` for capture exclusion; optional `DWMWA_CLOAK` via settings
 - Screen capture across monitors (`mss`) + Tesseract OCR + optional OpenCV preprocessing
 - Local speech-to-text with **faster-whisper**; optional WASAPI loopback for system audio
-- **Llama 3.1 70B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
+- **qwen3.8-27B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
+- Default model will be **qwen3.8-27B** as a backup **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** model are vailable.
 - Global hotkeys via the `keyboard` library
 - System tray icon with context menu (show/hide/export/quit)
 - Transcript export to `.txt` or `.md`
@@ -139,7 +140,8 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
   Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
 
 - **Invalid / missing API key**  
-  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The model used is `llama-3.1-70b-versatile`.
+  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The default model used is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`.
+
 
 - **No microphone or loopback device**  
   Grant microphone permission on Windows. Loopback requires a WASAPI loopback-capable device; if none is found, only mic capture runs.
@@ -171,10 +173,10 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
          | signals            | subtitle_updated
          v                    v
 +-------------------------------------------------------------+
-|                     OverlayWindow (QMainWindow)              |
-|  stealth.apply_stealth(hwnd) on show / move / resize         |
-|  + Header (drag) + Tabs (Answers | Subtitles) + Settings   |
-+-------+------------------------------------+---------------+
+|                     OverlayWindow (QMainWindow)             |
+|  stealth.apply_stealth(hwnd) on show / move / resize        |
+|  + Header (drag) + Tabs (Answers | Subtitles) + Settings    |
++-------+------------------------------------+----------------+
         |                                    |
         v                                    v
  +-------------+                     +---------------+
@@ -191,7 +193,7 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
         v
  +-------------+     +------------------+
  | AiStream    |<--->| Groq API         |
- | Worker      |     | (Llama 3.1 70B)  |
+ | Worker      |     | (qwen3.8-27b)    |
  +-------------+     +------------------+
 
  +------------------+       +-------------------+
