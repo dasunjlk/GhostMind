@@ -36,6 +36,26 @@ class TestVersionMetadata:
         assert "© 2024-2026" in version.__copyright__
 
 
+class TestModelConfiguration:
+    def test_default_model_is_qwen38(self):
+        from core.ai_engine import DEFAULT_MODEL, MODEL_ID
+        assert DEFAULT_MODEL == "qwen/qwen3.8-27b"
+        assert MODEL_ID == "qwen/qwen3.8-27b"
+
+    def test_backup_models_available(self):
+        from core.ai_engine import BACKUP_MODELS, AVAILABLE_MODELS
+        assert "qwen/qwen3.6-27b" in BACKUP_MODELS
+        assert "openai/gpt-oss-120b" in BACKUP_MODELS
+        assert "openai/gpt-oss-20b" in BACKUP_MODELS
+
+        model_ids = [mid for mid, _ in AVAILABLE_MODELS]
+        assert "qwen/qwen3.8-27b" in model_ids
+        assert "qwen/qwen3.6-27b" in model_ids
+        assert "openai/gpt-oss-120b" in model_ids
+        assert "openai/gpt-oss-20b" in model_ids
+
+
+
 class TestAudioResampling:
     def test_resample_identical_rate(self):
         audio = np.ones(16000, dtype=np.float32)
@@ -96,7 +116,7 @@ class TestSettingsPanelTabs:
             "session_type": "meeting",
             "capture_mic": True,
             "capture_system": True,
-            "ai_model": "llama-3.3-70b-versatile",
+            "ai_model": "qwen/qwen3.8-27b",
             "whisper_model": "base",
             "loopback_device": None,
             "hotkeys": {
@@ -118,8 +138,9 @@ class TestSettingsPanelTabs:
         assert collected["opacity"] == pytest.approx(0.85, 0.02)
         assert collected["session_type"] == "meeting"
         assert collected["capture_system"] is True
-        assert collected["ai_model"] == "llama-3.3-70b-versatile"
+        assert collected["ai_model"] == "qwen/qwen3.8-27b"
         assert "hotkeys" in collected
+
 
 
 class TestSubtitleBarFeatures:

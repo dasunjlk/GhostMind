@@ -19,10 +19,12 @@ from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
+from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener
 from ui.overlay_window import OverlayWindow
 from ui.subtitle_bar import _QUESTION_RE
 from utils.hotkey_manager import HotkeyManager
+
 
 
 def check_dependencies() -> List[str]:
@@ -107,7 +109,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "capture_mic": True,
     "capture_system": True,
     "session_type": "meeting",
-    "ai_model": "llama-3.3-70b-versatile",
+    "ai_model": DEFAULT_MODEL,
+
     "whisper_model": "base",
     "loopback_device": None,
     "hotkeys": {

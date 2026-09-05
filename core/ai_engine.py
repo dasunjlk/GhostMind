@@ -8,7 +8,7 @@ import logging
 import os
 import re
 import time
-from typing import Optional
+from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
 from PyQt6.QtCore import QObject, pyqtSignal, QThread
@@ -20,10 +20,22 @@ try:
 except ImportError:  # pragma: no cover
     Groq = None  # type: ignore
 
-# Supported Groq Models
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
-FAST_MODEL = "llama-3.1-8b-instant"
+# Supported Models
+DEFAULT_MODEL = "qwen/qwen3.8-27b"
 MODEL_ID = DEFAULT_MODEL
+BACKUP_MODELS: List[str] = [
+    "qwen/qwen3.6-27b",
+    "openai/gpt-oss-120b",
+    "openai/gpt-oss-20b",
+]
+
+AVAILABLE_MODELS: List[Tuple[str, str]] = [
+    ("qwen/qwen3.8-27b", "Qwen 3.8 27B (Default)"),
+    ("qwen/qwen3.6-27b", "Qwen 3.6 27B (Backup)"),
+    ("openai/gpt-oss-120b", "GPT-OSS 120B"),
+    ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
+]
+
 MAX_TOKENS = 1024
 
 BASE_SYSTEM = (
@@ -163,20 +175,35 @@ async def generate_answer(
     client = _get_client()
     system = build_system_prompt(context_type, content)
     user_msg = build_user_message(context_type, content)
-    model = model_id or MODEL_ID
     max_tokens = get_token_limit_for_context(context_type, content)
-    msg = await asyncio.to_thread(
-        lambda: client.chat.completions.create(
-            model=model,
-            max_tokens=max_tokens,
-            temperature=0.3,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user_msg},
-            ],
-        )
-    )
-    return (msg.choices[0].message.content or "").strip()
+    primary = model_id or MODEL_ID
+    models_to_try = [primary] + [m for m in BACKUP_MODELS if m != primary]
+    last_err: Optional[Exception] = None
+
+    for model in models_to_try:
+        try:
+            msg = await asyncio.to_thread(
+                lambda: client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=0.3,
+                    messages=[
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user_msg},
+                    ],
+                )
+            )
+            return (msg.choices[0].message.content or "").strip()
+        except Exception as e:
+            last_err = e
+            err_str = str(e).lower()
+            if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str:
+                continue
+            raise
+
+    if last_err:
+        raise last_err
+    return ""
 
 
 class AiStreamWorker(QThread):
@@ -211,41 +238,52 @@ class AiStreamWorker(QThread):
         ]
         max_tokens = get_token_limit_for_context(self._context_type, self._content)
 
-        attempts = 0
+        models_to_try = [self._model_id] + [m for m in BACKUP_MODELS if m != self._model_id]
         last_err: Optional[Exception] = None
-        while attempts < 3:
-            attempts += 1
-            try:
-                stream = client.chat.completions.create(
-                    model=self._model_id,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    messages=messages,
-                    stream=True,
-                )
-                for chunk in stream:
-                    if chunk.choices and chunk.choices[0].delta.content:
-                        self.chunk_received.emit(chunk.choices[0].delta.content)
-                self.finished_ok.emit()
-                return
-            except Exception as e:
-                last_err = e
-                logger.warning("Groq stream failed (attempt %s): %s", attempts, e)
-                # Fallback: non-streaming request
+
+        for model in models_to_try:
+            attempts = 0
+            while attempts < 2:
+                attempts += 1
                 try:
-                    resp = client.chat.completions.create(
-                        model=self._model_id,
+                    stream = client.chat.completions.create(
+                        model=model,
                         max_tokens=max_tokens,
                         temperature=0.3,
                         messages=messages,
+                        stream=True,
                     )
-                    body = (resp.choices[0].message.content or "").strip()
-                    if body:
-                        self.chunk_received.emit(body)
+                    for chunk in stream:
+                        if chunk.choices and chunk.choices[0].delta.content:
+                            self.chunk_received.emit(chunk.choices[0].delta.content)
                     self.finished_ok.emit()
                     return
-                except Exception as e2:
-                    last_err = e2
-                    logger.warning("Groq non-stream fallback failed: %s", e2)
-                time.sleep(0.5 * attempts)
+                except Exception as e:
+                    last_err = e
+                    logger.warning("Groq stream with model %s failed (attempt %s): %s", model, attempts, e)
+                    err_str = str(e).lower()
+                    if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
+                        logger.warning("Model %s not found/accessible, trying next model...", model)
+                        break
+                    # Fallback: non-streaming request
+                    try:
+                        resp = client.chat.completions.create(
+                            model=model,
+                            max_tokens=max_tokens,
+                            temperature=0.3,
+                            messages=messages,
+                        )
+                        body = (resp.choices[0].message.content or "").strip()
+                        if body:
+                            self.chunk_received.emit(body)
+                        self.finished_ok.emit()
+                        return
+                    except Exception as e2:
+                        last_err = e2
+                        logger.warning("Groq non-stream fallback with model %s failed: %s", model, e2)
+                        err_str2 = str(e2).lower()
+                        if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
+                            break
+                    time.sleep(0.3 * attempts)
+
         self.failed.emit(str(last_err) if last_err else "Unknown API error")

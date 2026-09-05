@@ -30,9 +30,10 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import AiStreamWorker
+from core.ai_engine import AiStreamWorker, DEFAULT_MODEL
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
+
 from ui.answer_panel import AnswerPanel
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
@@ -354,7 +355,8 @@ class OverlayWindow(QMainWindow):
             self._answer_panel.end_stream_error("Already processing another answer.")
             return
 
-        model_id = str(self._settings.get("ai_model", "llama-3.3-70b-versatile"))
+        model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
+
         self._answer_panel.begin_answer_stream()
         self._ai_worker = AiStreamWorker(content, context_type, model_id=model_id)
         self._ai_worker.chunk_received.connect(self._answer_panel.append_stream_chunk)

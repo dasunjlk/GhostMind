@@ -139,7 +139,8 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
   Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
 
 - **Invalid / missing API key**  
-  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The model used is `llama-3.1-70b-versatile`.
+  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The default model used is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`.
+
 
 - **No microphone or loopback device**  
   Grant microphone permission on Windows. Loopback requires a WASAPI loopback-capable device; if none is found, only mic capture runs.

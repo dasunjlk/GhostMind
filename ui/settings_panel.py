@@ -27,9 +27,11 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core.ai_engine import AVAILABLE_MODELS, DEFAULT_MODEL
 from core.audio_listener import get_input_devices
 from core.screen_reader import get_monitors
 from version import __app_name__, __author__, __copyright__, __description__, __github__, __version__
+
 
 
 class _ApiTestSignals(QObject):
@@ -151,9 +153,9 @@ class SettingsPanel(QWidget):
         form_api.setSpacing(10)
 
         self._ai_model = QComboBox()
-        self._ai_model.addItem("Llama 3.3 70B (Recommended)", "llama-3.3-70b-versatile")
-        self._ai_model.addItem("Llama 3.1 8B (Ultra Fast)", "llama-3.1-8b-instant")
-        self._ai_model.addItem("Qwen 2.5 32B", "qwen/qwen3.6-27b")
+        for model_id, label in AVAILABLE_MODELS:
+            self._ai_model.addItem(label, model_id)
+
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
@@ -333,7 +335,7 @@ class SettingsPanel(QWidget):
         self._whisper.setCurrentText(str(self._data.get("whisper_model", "base")))
 
         # AI Model
-        chosen_model = str(self._data.get("ai_model", "llama-3.3-70b-versatile"))
+        chosen_model = str(self._data.get("ai_model", DEFAULT_MODEL))
         idx = self._ai_model.findData(chosen_model)
         if idx >= 0:
             self._ai_model.setCurrentIndex(idx)
@@ -372,7 +374,7 @@ class SettingsPanel(QWidget):
             "capture_system": self._cap_sys.currentText() == "yes",
             "loopback_device": loopback_id,
             "whisper_model": self._whisper.currentText(),
-            "ai_model": self._ai_model.currentData() or "llama-3.3-70b-versatile",
+            "ai_model": self._ai_model.currentData() or DEFAULT_MODEL,
             "hotkeys": {
                 "toggle_visibility": self._hk_vis.text().strip(),
                 "screen_scan": self._hk_scan.text().strip(),
@@ -396,7 +398,8 @@ class SettingsPanel(QWidget):
             QMessageBox.warning(self, "API Key Required", "Enter an API key or set GROQ_API_KEY in .env")
             return
 
-        model = self._ai_model.currentData() or "llama-3.3-70b-versatile"
+        model = self._ai_model.currentData() or DEFAULT_MODEL
+
 
         def _work() -> None:
             try:
@@ -462,10 +465,11 @@ def run_api_self_test(api_key: str, on_done: Callable[[bool, str], None]) -> Non
 
         client = Groq(api_key=api_key)
         client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=DEFAULT_MODEL,
             max_tokens=16,
             messages=[{"role": "user", "content": "Reply with OK only."}],
         )
         on_done(True, "API key works.")
     except Exception as e:
         on_done(False, str(e))
+
