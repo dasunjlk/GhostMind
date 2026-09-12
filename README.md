@@ -10,7 +10,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - Screen capture across monitors (`mss`) + Tesseract OCR + optional OpenCV preprocessing
 - Local speech-to-text with **faster-whisper**; optional WASAPI loopback for system audio
 - **qwen3.8-27B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
-- Default model will be **qwen3.8-27B** as a backup **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** model are vailable.
+- Default model will be **qwen3.8-27B** as a backup **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** model are available.
 - Global hotkeys via the `keyboard` library
 - System tray icon with context menu (show/hide/export/quit)
 - Transcript export to `.txt` or `.md`
