@@ -30,7 +30,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
   Install example (Chocolatey): `choco install tesseract`  
   Or download from: https://github.com/UB-Mannheim/tesseract/wiki
 
-- **Groq API key** in `.env` as `GROQ_API_KEY` (free tier available at [console.groq.com](https://console.groq.com))
+- **Groq API key** — free tier available at [console.groq.com](https://console.groq.com). Paste it in the app under **Settings → AI & API** (stored securely in Windows Credential Manager), or set `GROQ_API_KEY` in `.env` as a fallback.
 
 ### Optional: faster GPU for Whisper
 
@@ -44,9 +44,9 @@ cd GhostMind
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-# Edit .env — set GROQ_API_KEY
 ```
+
+Then launch the app and paste your Groq key under **Settings → AI & API → Save** — it persists across restarts (Windows Credential Manager, with a `config/settings.toml` plaintext fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
 
 ### Fonts (optional)
 

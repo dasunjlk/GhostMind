@@ -150,11 +150,21 @@ def _get_client() -> Groq:
             "groq package is not installed.\n"
             "Install it with: pip install groq"
         )
-    key = os.environ.get("GROQ_API_KEY", "").strip()
+    # Prefer the securely stored key (Windows Credential Manager via keyring,
+    # with settings.toml fallback); the GROQ_API_KEY env/.env value is the fallback.
+    key = ""
+    try:
+        from utils.key_store import load_key
+
+        key = load_key()
+    except Exception as e:
+        logger.warning("key_store load failed: %s", e)
+    if not key:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
     if not key:
         raise RuntimeError(
-            "GROQ_API_KEY is not set.\n"
-            "Get a free key at https://console.groq.com and add it to your .env file."
+            "No Groq API key found.\n"
+            "Open Settings -> AI & API and paste your free key from https://console.groq.com"
         )
     return Groq(api_key=key)
 

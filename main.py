@@ -54,13 +54,20 @@ def check_dependencies() -> List[str]:
             "  Install: pip install groq"
         )
 
-    # Groq API key
+    # Groq API key (securely stored via keyring, or env/.env fallback)
     groq_key = os.environ.get("GROQ_API_KEY", "").strip()
     if not groq_key:
+        try:
+            from utils.key_store import load_key
+
+            groq_key = load_key()
+        except Exception:
+            groq_key = ""
+    if not groq_key:
         warnings.append(
-            "GROQ_API_KEY is not set.\n"
+            "No Groq API key found.\n"
             "  AI answers will not work.\n"
-            "  Get a free key at https://console.groq.com and add it to .env"
+            "  Open Settings -> AI & API and paste a free key from https://console.groq.com"
         )
 
     # faster-whisper

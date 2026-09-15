@@ -3,10 +3,11 @@ In-overlay tabbed settings: General, Audio, Shortcuts, AI & API, and About.
 """
 from __future__ import annotations
 
-import os
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from utils import key_store
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -159,6 +160,18 @@ class SettingsPanel(QWidget):
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
+
+        self._key_status = QLabel("")
+        self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+
+        self._clear_key_btn = QPushButton("Clear stored key")
+        self._clear_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_key_btn.setStyleSheet(
+            "QPushButton{background:#141414;color:#CC6666;border:1px solid #552222;padding:5px 10px;border-radius:4px;font-size:11px;}"
+            "QPushButton:hover{background:#2A1414;color:#FF8888;border-color:#CC6666;}"
+        )
+        self._clear_key_btn.clicked.connect(self._on_clear_key)
 
         test_btn = QPushButton("Test API Key")
         test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -170,7 +183,12 @@ class SettingsPanel(QWidget):
 
         form_api.addRow("AI Model:", self._ai_model)
         form_api.addRow("Groq API Key:", self._api_key)
-        form_api.addRow("", test_btn)
+        form_api.addRow("", self._key_status)
+        key_btn_row = QHBoxLayout()
+        key_btn_row.addWidget(self._clear_key_btn)
+        key_btn_row.addWidget(test_btn)
+        key_btn_row.addStretch(1)
+        form_api.addRow("", key_btn_row)
 
         # 5. About Tab
         tab_about = QWidget()
@@ -349,10 +367,21 @@ class SettingsPanel(QWidget):
         self._hk_export.setText(str(hk.get("export_transcript", "ctrl+shift+e")))
         self._hk_click.setText(str(hk.get("toggle_click_through", "ctrl+shift+x")))
 
-        # API Key
-        key = os.environ.get("GROQ_API_KEY", "")
-        if key:
-            self._api_key.setPlaceholderText("•••••••••••••••• (Active from environment)")
+        # API key status (never render the key itself)
+        stored = ""
+        try:
+            stored = key_store.load_key()
+        except Exception:
+            pass
+        if stored:
+            where = "Windows Credential Manager" if key_store.is_keyring_available() else "config/settings.toml (plaintext fallback)"
+            self._key_status.setText(f"● Key stored in {where}")
+            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+            self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
+        else:
+            self._key_status.setText("No key stored.")
+            self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+            self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
         self._api_key.clear()
 
     def collect_data(self) -> Dict[str, Any]:
@@ -389,13 +418,51 @@ class SettingsPanel(QWidget):
         d = self.collect_data()
         k = self._api_key.text().strip()
         if k:
-            os.environ["GROQ_API_KEY"] = k
+            try:
+                backend = key_store.save_key(k)
+                where = (
+                    "Windows Credential Manager"
+                    if backend == "keyring"
+                    else "config/settings.toml (plaintext fallback)"
+                )
+                self._key_status.setText(f"● Key saved to {where}")
+                self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+                self._api_key.clear()
+                self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
+            except Exception as e:
+                QMessageBox.warning(self, "Key Storage Failed", str(e))
         self.saved.emit(d)
 
+    def _on_clear_key(self) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "Clear Stored Key",
+            "Remove the stored API key from this computer?\n"
+            "AI answers will stop working until you enter a new key.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            key_store.clear_key()
+        except Exception as e:
+            QMessageBox.warning(self, "Key Storage Failed", str(e))
+            return
+        self._key_status.setText("No key stored.")
+        self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+        self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
+        self._api_key.clear()
+
     def _on_test_api(self) -> None:
-        k = self._api_key.text().strip() or os.environ.get("GROQ_API_KEY", "")
+        k = self._api_key.text().strip()
         if not k:
-            QMessageBox.warning(self, "API Key Required", "Enter an API key or set GROQ_API_KEY in .env")
+            try:
+                k = key_store.load_key()
+            except Exception:
+                k = ""
+        if not k:
+            k = os.environ.get("GROQ_API_KEY", "")
+        if not k:
+            QMessageBox.warning(self, "API Key Required", "Enter an API key, or store one via Save, or set GROQ_API_KEY in .env")
             return
 
         model = self._ai_model.currentData() or DEFAULT_MODEL
