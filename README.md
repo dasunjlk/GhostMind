@@ -1,6 +1,6 @@
 # GhostMind
 
-GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **Llama 3.1 70B** (via Groq) for concise answers inside the app.
+GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **qwen3.8-27B** (via Groq) for concise answers inside the app.
 
 ## Features
 
@@ -215,7 +215,7 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
 GhostMind/
 ├── main.py                 # Entry point, controller, tray, logging
 ├── core/
-│   ├── ai_engine.py        # Groq API (Llama 3.1 70B) with streaming
+│   ├── ai_engine.py        # Groq API (qwen3.8-27B) with streaming
 │   ├── audio_listener.py   # Mic/system capture + faster-whisper STT
 │   ├── screen_reader.py    # mss screenshot + Tesseract OCR
 │   └── stealth.py          # Win32 stealth (hide from capture/taskbar)

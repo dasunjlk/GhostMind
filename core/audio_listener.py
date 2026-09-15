@@ -30,8 +30,8 @@ def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
     """Resample any 1D audio array to 16,000 Hz."""
     if orig_rate == SAMPLE_RATE or len(audio) == 0:
         return audio.astype(np.float32)
-    if orig_rate == 48000:
-        return audio[::3].astype(np.float32)
+    # Linear interpolation for every rate: naive decimation (e.g. audio[::3]
+    # for 48 kHz) aliases high frequencies into the speech band.
     target_len = int(len(audio) * SAMPLE_RATE / orig_rate)
     if target_len <= 0:
         return np.empty(0, dtype=np.float32)

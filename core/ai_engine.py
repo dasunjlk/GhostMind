@@ -20,6 +20,11 @@ try:
 except ImportError:  # pragma: no cover
     Groq = None  # type: ignore
 
+try:
+    from groq import RateLimitError  # type: ignore
+except ImportError:  # pragma: no cover
+    RateLimitError = None  # type: ignore
+
 # Supported Models
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
 MODEL_ID = DEFAULT_MODEL
@@ -206,6 +211,35 @@ async def generate_answer(
     return ""
 
 
+def _is_rate_limit_error(err: Exception) -> bool:
+    """Return True if the exception looks like an HTTP 429 rate-limit error."""
+    if RateLimitError is not None and isinstance(err, RateLimitError):
+        return True
+    response = getattr(err, "response", None)
+    if getattr(response, "status_code", None) == 429:
+        return True
+    text = str(err).lower()
+    return "429" in text or "rate limit" in text
+
+
+def _rate_limit_backoff(err: Exception, attempt: int) -> float:
+    """Seconds to wait before retrying after a rate-limit error.
+
+    Honors the server's Retry-After header when present; otherwise backs off
+    exponentially (1s, 2s, 4s, ...). Always capped at 30s.
+    """
+    delay = float(2 ** max(0, attempt - 1))
+    response = getattr(err, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            delay = max(delay, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, 30.0)
+
+
 class AiStreamWorker(QThread):
     chunk_received = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -243,7 +277,7 @@ class AiStreamWorker(QThread):
 
         for model in models_to_try:
             attempts = 0
-            while attempts < 2:
+            while attempts < 4:  # 1 initial + up to 3 rate-limit retries
                 attempts += 1
                 try:
                     stream = client.chat.completions.create(
@@ -265,6 +299,15 @@ class AiStreamWorker(QThread):
                     if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
                         logger.warning("Model %s not found/accessible, trying next model...", model)
                         break
+                    if _is_rate_limit_error(e):
+                        if attempts > 3:
+                            break  # give up on this model after the initial try + 3 retries
+                        delay = _rate_limit_backoff(e, attempts)
+                        logger.warning("Rate limited on %s; retrying in %.1fs", model, delay)
+                        if delay > 3:
+                            self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                        time.sleep(delay)
+                        continue
                     # Fallback: non-streaming request
                     try:
                         resp = client.chat.completions.create(
@@ -284,6 +327,15 @@ class AiStreamWorker(QThread):
                         err_str2 = str(e2).lower()
                         if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
                             break
+                        if _is_rate_limit_error(e2):
+                            if attempts > 3:
+                                break
+                            delay = _rate_limit_backoff(e2, attempts)
+                            logger.warning("Rate limited (non-stream) on %s; retrying in %.1fs", model, delay)
+                            if delay > 3:
+                                self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                            time.sleep(delay)
+                            continue
                     time.sleep(0.3 * attempts)
 
         self.failed.emit(str(last_err) if last_err else "Unknown API error")

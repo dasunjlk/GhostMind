@@ -21,8 +21,8 @@ from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSyst
 
 from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener
+from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
-from ui.subtitle_bar import _QUESTION_RE
 from utils.hotkey_manager import HotkeyManager
 
 
@@ -313,7 +313,7 @@ class GhostMindController(QObject):
     def _on_subtitle_line(self, line: str) -> None:
         self.overlay.push_subtitle_line(line)
         # Fast question detection based on '?' or question words
-        is_q = "?" in line or bool(_QUESTION_RE.search(line))
+        is_q = is_question(line)
         if is_q:
             self._meeting_timer.start(1200)
 
