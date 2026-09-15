@@ -117,6 +117,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "capture_system": True,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
+    # User-added model IDs from the "＋ Add custom model…" flow (AI & API tab)
+    "custom_models": [],
 
     "whisper_model": "base",
     "loopback_device": None,

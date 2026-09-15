@@ -41,6 +41,9 @@ AVAILABLE_MODELS: List[Tuple[str, str]] = [
     ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
 ]
 
+# Sentinel itemData value for the settings dropdown "＋ Add custom model…" entry.
+ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
+
 MAX_TOKENS = 1024
 
 BASE_SYSTEM = (
@@ -143,6 +146,75 @@ def build_user_message(context_type: str, content: str) -> str:
     return f"Screen OCR text:\n\n{content}"
 
 
+def resolve_api_key(explicit: Optional[str] = None) -> str:
+    """API key lookup order: explicit argument -> keyring store -> env/.env."""
+    key = (explicit or "").strip()
+    if not key:
+        try:
+            from utils.key_store import load_key
+
+            key = load_key().strip()
+        except Exception as e:
+            logger.warning("key_store load failed: %s", e)
+    if not key:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+    return key
+
+
+_NO_KEY_MSG = (
+    "No API key found. Open Settings -> AI & API, paste your free key "
+    "from https://console.groq.com, then Save."
+)
+
+
+def _classify_api_error(err: Exception) -> str:
+    """Map a Groq client exception to a short, actionable user message."""
+    text = str(err).lower()
+    if (
+        "401" in text
+        or "invalid_api_key" in text
+        or "invalid api key" in text
+        or "unauthorized" in text
+    ):
+        return "API key was rejected - invalid or revoked. Double-check the key from https://console.groq.com"
+    if any(
+        s in text
+        for s in ("connection", "timed out", "timeout", "getaddrinfo", "unreachable", "failed to resolve")
+    ):
+        return "Network error reaching Groq. Check your internet connection and try again."
+    return f"Groq error: {str(err)[:200]}"
+
+
+def validate_key_and_model(
+    api_key: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Verify the API key works AND that `model_id` is available to it.
+
+    Uses one cheap `models.list` call (no chat completion, no token usage).
+    Returns (ok, human-readable message) — never raises.
+    """
+    load_dotenv()
+    key = resolve_api_key(api_key)
+    if not key:
+        return False, _NO_KEY_MSG
+    if Groq is None:
+        return False, "groq package is not installed. Install it with: pip install groq"
+    try:
+        client = Groq(api_key=key)
+        models = client.models.list()
+        ids = {m.id for m in (getattr(models, "data", None) or [])}
+    except Exception as e:
+        return False, _classify_api_error(e)
+    model = (model_id or MODEL_ID).strip()
+    if ids and model not in ids:
+        return False, (
+            f"Model '{model}' is not available with this API key. "
+            "Pick a model from the list, or check the exact ID at https://console.groq.com/docs/models"
+        )
+    return True, f"API key works - '{model}' is ready."
+
+
 def _get_client() -> Groq:
     load_dotenv()
     if Groq is None:
@@ -150,22 +222,9 @@ def _get_client() -> Groq:
             "groq package is not installed.\n"
             "Install it with: pip install groq"
         )
-    # Prefer the securely stored key (Windows Credential Manager via keyring,
-    # with settings.toml fallback); the GROQ_API_KEY env/.env value is the fallback.
-    key = ""
-    try:
-        from utils.key_store import load_key
-
-        key = load_key()
-    except Exception as e:
-        logger.warning("key_store load failed: %s", e)
+    key = resolve_api_key()
     if not key:
-        key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not key:
-        raise RuntimeError(
-            "No Groq API key found.\n"
-            "Open Settings -> AI & API and paste your free key from https://console.groq.com"
-        )
+        raise RuntimeError(_NO_KEY_MSG)
     return Groq(api_key=key)
 
 
