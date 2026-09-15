@@ -90,7 +90,41 @@ class TestBuildUserMessage:
         assert "Transcript" in msg
         assert "Hello everyone" in msg
 
+    def test_meeting_question_message(self):
+        msg = build_user_message("meeting_question", "What is the sprint goal?")
+        assert "Question" in msg
+        assert "sprint goal" in msg
+
+    def test_lecture_message(self):
+        msg = build_user_message("lecture_notes", "Today we discuss neural nets")
+        assert "Lecture" in msg
+        assert "neural nets" in msg
+
     def test_screen_message(self):
         msg = build_user_message("screen", "Some OCR text")
         assert "Screen" in msg or "OCR" in msg
         assert "Some OCR text" in msg
+
+
+class TestNewContextPrompts:
+    def test_meeting_question_prompt(self):
+        prompt = build_system_prompt("meeting_question", "Can someone explain this?")
+        assert "meeting" in prompt.lower()
+        assert "question" in prompt.lower()
+
+    def test_lecture_prompt(self):
+        prompt = build_system_prompt("lecture_notes", "Today we learn calculus")
+        assert "lecture" in prompt.lower() or "class" in prompt.lower()
+
+
+class TestTokenLimits:
+    def test_meeting_question_limit(self):
+        from core.ai_engine import get_token_limit_for_context
+        limit = get_token_limit_for_context("meeting_question", "test")
+        assert limit <= 400
+
+    def test_quiz_mcq_limit(self):
+        from core.ai_engine import get_token_limit_for_context
+        limit = get_token_limit_for_context("screen", "A) one\nB) two")
+        assert limit <= 500
+

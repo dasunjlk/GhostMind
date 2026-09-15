@@ -143,3 +143,45 @@ code_here()
         assert "Before code" in result
         assert "x = 1" in result
         assert "After code" in result
+
+
+class TestHeadings:
+    def test_h1_heading(self):
+        result = parse_and_render("# Main Title")
+        assert "<h1" in result
+        assert "Main Title" in result
+
+    def test_h2_heading(self):
+        result = parse_and_render("## Section Heading")
+        assert "<h2" in result
+        assert "Section Heading" in result
+
+    def test_h3_heading(self):
+        result = parse_and_render("### Subsection")
+        assert "<h3" in result
+        assert "Subsection" in result
+
+
+class TestHorizontalRules:
+    def test_dashes(self):
+        result = parse_and_render("Above\n\n---\n\nBelow")
+        assert "<hr" in result
+        assert "Above" in result
+        assert "Below" in result
+
+    def test_stars(self):
+        result = parse_and_render("***")
+        assert "<hr" in result
+
+
+class TestBlockquotesAndAnswers:
+    def test_blockquote(self):
+        result = parse_and_render("> Important note here")
+        assert "border-left:3px solid #00FF88" in result
+        assert "Important note here" in result
+
+    def test_answer_badge(self):
+        result = parse_and_render("**Answer:** [B] O(log n)")
+        assert "border:1px solid #00FF88" in result
+        assert "[B] O(log n)" in result
+

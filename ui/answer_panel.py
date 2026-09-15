@@ -28,7 +28,7 @@ class _ThinkingDots(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self._label = QLabel("Thinking")
-        self._label.setStyleSheet("color:#888;font-style:italic;")
+        self._label.setStyleSheet("color:#00FF88;font-style:italic;")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 4)
         lay.addWidget(self._label)
@@ -40,9 +40,9 @@ class _ThinkingDots(QWidget):
         if self._timer is None:
             self._timer = QTimer(self)
             self._timer.timeout.connect(self._tick)
-            self._timer.start(400)
+            self._timer.start(350)
         else:
-            self._timer.start(400)
+            self._timer.start(350)
 
     def hideEvent(self, e) -> None:
         super().hideEvent(e)
@@ -70,14 +70,14 @@ class _AnswerBlock(QWidget):
         self._text.document().setDocumentMargin(8)
         self._text.setStyleSheet(
             "QTextEdit { background: transparent; color: #E0E0E0; "
-            "border: 1px solid #222; border-radius: 6px; }"
+            "border: 1px solid #1E3A2B; border-radius: 6px; }"
         )
 
         self._copy_btn = QPushButton("Copy")
         self._copy_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._copy_btn.setStyleSheet(
-            "QPushButton { background:#1A1A1A;color:#00FF88;border:none;padding:4px 10px; }"
-            "QPushButton:hover { background:#252525; }"
+            "QPushButton { background:#162B1E;color:#00FF88;border:1px solid #1E3A2B;padding:4px 10px; border-radius:3px; font-size:11px; }"
+            "QPushButton:hover { background:#1E3E2B; border-color:#00FF88; }"
         )
         self._copy_btn.clicked.connect(self._on_copy)
 
@@ -92,19 +92,21 @@ class _AnswerBlock(QWidget):
 
     def _on_copy(self) -> None:
         self.copy_requested.emit(self._raw_markdown or self._text.toPlainText())
+        self._copy_btn.setText("Copied!")
+        QTimer.singleShot(1500, lambda: self._copy_btn.setText("Copy"))
 
     def set_html(self, html: str) -> None:
         self._text.setHtml(html)
         self._text.document().adjustSize()
         h = int(self._text.document().size().height()) + 24
-        self._text.setMinimumHeight(min(max(h, 80), 1200))
+        self._text.setMinimumHeight(min(max(h, 60), 1400))
 
     def set_streaming_plain(self, text: str) -> None:
         self._raw_markdown = text
         self._text.setPlainText(text)
         self._text.moveCursor(QTextCursor.MoveOperation.End)
         doc_h = int(self._text.document().size().height()) + 24
-        self._text.setMinimumHeight(min(max(doc_h, 60), 1200))
+        self._text.setMinimumHeight(min(max(doc_h, 50), 1400))
 
     def finalize_markdown(self, md: str) -> None:
         self._raw_markdown = md
@@ -125,12 +127,12 @@ class AnswerPanel(QWidget):
 
         header = QHBoxLayout()
         title = QLabel("Answers")
-        title.setStyleSheet("color:#00FF88;font-weight:bold;")
+        title.setStyleSheet("color:#00FF88;font-weight:bold;font-size:13px;")
         clear_btn = QPushButton("Clear")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         clear_btn.setStyleSheet(
-            "QPushButton { background:#1A1A1A;color:#E0E0E0;border:none;padding:4px 12px; }"
-            "QPushButton:hover { background:#2A2A2A; }"
+            "QPushButton { background:#1A1A1A;color:#E0E0E0;border:1px solid #333;padding:3px 10px; border-radius:3px; font-size:11px; }"
+            "QPushButton:hover { background:#2A2A2A;color:#FFF; }"
         )
         clear_btn.clicked.connect(self._on_clear)
         header.addWidget(title)

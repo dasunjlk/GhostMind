@@ -19,9 +19,12 @@ from PyQt6.QtCore import QObject, Qt, QTimer
 from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
+from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener
 from ui.overlay_window import OverlayWindow
+from ui.subtitle_bar import _QUESTION_RE
 from utils.hotkey_manager import HotkeyManager
+
 
 
 def check_dependencies() -> List[str]:
@@ -104,9 +107,13 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "dwm_cloak": False,
     "subtitles_enabled": True,
     "capture_mic": True,
-    "capture_system": False,
+    "capture_system": True,
+    "session_type": "meeting",
+    "ai_model": DEFAULT_MODEL,
+
     "whisper_model": "base",
-    "loopback_device": None,        "hotkeys": {
+    "loopback_device": None,
+    "hotkeys": {
         "toggle_visibility": "ctrl+shift+g",
         "screen_scan": "ctrl+shift+s",
         "clear_answers": "ctrl+shift+c",
@@ -240,6 +247,7 @@ class GhostMindController(QObject):
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
+        self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -277,7 +285,7 @@ class GhostMindController(QObject):
         if not self.settings.get("subtitles_enabled", True):
             return
         if not self.settings.get("capture_mic", True) and not self.settings.get(
-            "capture_system", False
+            "capture_system", True
         ):
             return
         loop_dev = self.settings.get("loopback_device")
@@ -286,11 +294,13 @@ class GhostMindController(QObject):
                 loop_dev = int(loop_dev)
             except (TypeError, ValueError):
                 loop_dev = None
+        session_type = str(self.settings.get("session_type", "meeting"))
         self._audio = AudioListener(
             capture_mic=bool(self.settings.get("capture_mic", True)),
-            capture_system=bool(self.settings.get("capture_system", False)),
+            capture_system=bool(self.settings.get("capture_system", True)),
             loopback_device=loop_dev,
             model_size=str(self.settings.get("whisper_model", "base")),
+            session_type=session_type,
         )
         self._audio.subtitle_updated.connect(self._on_subtitle_line)
         self._audio.failed.connect(self._on_audio_failed)
@@ -298,13 +308,29 @@ class GhostMindController(QObject):
 
     def _on_audio_failed(self, msg: str) -> None:
         logger.error("Audio: %s", msg)
-        # Show a user-friendly message in the answer panel
         self.overlay._answer_panel.end_stream_error(f"Audio: {msg}")
 
     def _on_subtitle_line(self, line: str) -> None:
         self.overlay.push_subtitle_line(line)
-        if "?" in line:
-            self._meeting_timer.start(1600)
+        # Fast question detection based on '?' or question words
+        is_q = "?" in line or bool(_QUESTION_RE.search(line))
+        if is_q:
+            self._meeting_timer.start(1200)
+
+    def _summarize_meeting(self) -> None:
+        """Summarize all transcript captured so far."""
+        if self._audio is None:
+            self.overlay._answer_panel.end_stream_error("No audio capture is currently active.")
+            return
+        snap = self._audio.full_transcript()
+        if not snap:
+            self.overlay._answer_panel.end_stream_error("No audio transcript recorded yet to summarize.")
+            return
+        st = str(self.settings.get("session_type", "meeting"))
+        lines = [f"{src}: {txt}" for _ts, src, txt in snap]
+        text = "\n".join(lines)
+        context_type = "lecture_notes" if st == "lecture" else "meeting_summary"
+        self.overlay.request_ai_answer(text, context_type)
 
     # --- tray actions ---
     def _tray_show(self) -> None:
@@ -414,7 +440,9 @@ class GhostMindController(QObject):
             return
         lines = [f"{src}: {txt}" for _ts, src, txt in snap]
         text = "\n".join(lines)
-        self.overlay.request_ai_answer(text, "meeting_audio")
+        st = str(self.settings.get("session_type", "meeting"))
+        context_type = "meeting_question" if "?" in text else ("meeting_audio" if st == "meeting" else "lecture_notes")
+        self.overlay.request_ai_answer(text, context_type)
 
 
 def main() -> int:
@@ -425,7 +453,6 @@ def main() -> int:
     )
     app = QApplication(sys.argv)
     app.setApplicationName("GhostMind")
-    app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
 
     # Startup dependency check
     warnings = check_dependencies()

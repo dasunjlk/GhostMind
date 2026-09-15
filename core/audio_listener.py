@@ -1,5 +1,5 @@
 """
-Microphone and optional WASAPI loopback capture with faster-whisper transcription.
+Microphone and system audio (WASAPI / Stereo Mix / Loopback) capture with faster-whisper transcription.
 Runs in a QThread; emits subtitle lines with source labels.
 """
 from __future__ import annotations
@@ -8,7 +8,7 @@ import logging
 import queue
 import time
 from collections import deque
-from typing import Deque, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
 import sounddevice as sd
@@ -26,6 +26,43 @@ CHUNK_INTERVAL_SEC = 2.0
 ROLLING_SEC = 60.0
 
 
+def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
+    """Resample any 1D audio array to 16,000 Hz."""
+    if orig_rate == SAMPLE_RATE or len(audio) == 0:
+        return audio.astype(np.float32)
+    if orig_rate == 48000:
+        return audio[::3].astype(np.float32)
+    target_len = int(len(audio) * SAMPLE_RATE / orig_rate)
+    if target_len <= 0:
+        return np.empty(0, dtype=np.float32)
+    return np.interp(
+        np.linspace(0, len(audio), target_len, endpoint=False),
+        np.arange(len(audio)),
+        audio,
+    ).astype(np.float32)
+
+
+def get_input_devices() -> List[Dict[str, Any]]:
+    """Return all available input audio devices across host APIs."""
+    devices = []
+    hostapis = {i: h.get("name", "") for i, h in enumerate(sd.query_hostapis())}
+    for i, d in enumerate(sd.query_devices()):
+        ch = int(d.get("max_input_channels", 0))
+        if ch > 0:
+            hname = hostapis.get(d.get("hostapi", -1), "")
+            devices.append(
+                {
+                    "id": i,
+                    "name": f"[{hname}] {d.get('name', 'Unknown')}",
+                    "raw_name": d.get("name", ""),
+                    "channels": ch,
+                    "hostapi": hname,
+                    "samplerate": int(d.get("default_samplerate", 48000)),
+                }
+            )
+    return devices
+
+
 def _find_wasapi_hostapi_index() -> Optional[int]:
     for i, h in enumerate(sd.query_hostapis()):
         if "wasapi" in h["name"].lower():
@@ -34,36 +71,65 @@ def _find_wasapi_hostapi_index() -> Optional[int]:
 
 
 def find_loopback_device_index() -> Optional[int]:
-    """Best-effort default loopback input device on Windows WASAPI."""
-    wasapi = _find_wasapi_hostapi_index()
-    if wasapi is None:
-        return None
+    """Best-effort search for loopback / stereo mix / system audio recording device."""
     devices = sd.query_devices()
+    # 1. Look for explicit loopback / stereo mix keywords across all host APIs
+    keywords = ["stereo mix", "loopback", "what u hear", "wave out", "virtual audio", "cable output"]
     for i, d in enumerate(devices):
-        if d["hostapi"] != wasapi or int(d.get("max_input_channels", 0)) < 1:
+        if int(d.get("max_input_channels", 0)) < 1:
             continue
         name = str(d.get("name", "")).lower()
-        if "loopback" in name or "stereo mix" in name or "what u hear" in name:
+        if any(k in name for k in keywords):
             return i
+
+    # 2. Look in WASAPI specifically
+    wasapi = _find_wasapi_hostapi_index()
+    if wasapi is not None:
+        for i, d in enumerate(devices):
+            if d.get("hostapi") == wasapi and int(d.get("max_input_channels", 0)) > 0:
+                name = str(d.get("name", "")).lower()
+                if any(k in name for k in keywords):
+                    return i
+
     return None
 
 
-def _open_loopback_stream(device_index: int, callback, blocksize: int = 1024):
-    """Open WASAPI loopback InputStream; tries WasapiSettings when available."""
-    kwargs = dict(
-        channels=1,
-        samplerate=SAMPLE_RATE,
+def _create_stream(device_idx: Optional[int], callback: Any) -> Tuple[sd.InputStream, int]:
+    """Open an InputStream trying 16kHz first, falling back to native device sample rate."""
+    native_rate = SAMPLE_RATE
+    channels = 1
+    if device_idx is not None:
+        try:
+            d_info = sd.query_devices(device_idx)
+            native_rate = int(d_info.get("default_samplerate", 48000))
+            channels = min(1, int(d_info.get("max_input_channels", 1)))
+        except Exception:
+            pass
+
+    # Attempt 1: 16kHz directly
+    try:
+        stream = sd.InputStream(
+            device=device_idx,
+            channels=channels,
+            samplerate=SAMPLE_RATE,
+            dtype="float32",
+            callback=callback,
+            blocksize=1024,
+        )
+        return stream, SAMPLE_RATE
+    except Exception as e1:
+        logger.debug("Opening stream at 16kHz failed (%s), trying native rate %d", e1, native_rate)
+
+    # Attempt 2: Device native sample rate
+    stream = sd.InputStream(
+        device=device_idx,
+        channels=channels,
+        samplerate=native_rate,
         dtype="float32",
         callback=callback,
-        blocksize=blocksize,
+        blocksize=1024,
     )
-    try:
-        wasapi_settings = getattr(sd, "WasapiSettings", None)
-        if wasapi_settings is not None:
-            return sd.InputStream(device=(device_index, wasapi_settings(loopback=True)), **kwargs)
-    except Exception as e:
-        logger.debug("WasapiSettings loopback failed: %s", e)
-    return sd.InputStream(device=device_index, **kwargs)
+    return stream, native_rate
 
 
 class AudioListener(QThread):
@@ -75,9 +141,10 @@ class AudioListener(QThread):
     def __init__(
         self,
         capture_mic: bool = True,
-        capture_system: bool = False,
+        capture_system: bool = True,
         loopback_device: Optional[int] = None,
         model_size: str = "base",
+        session_type: str = "meeting",
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -85,9 +152,20 @@ class AudioListener(QThread):
         self._capture_system = capture_system
         self._loopback_device = loopback_device
         self._model_size = model_size
+        self._session_type = session_type
         self._running = False
         self._transcript: Deque[Tuple[float, str, str]] = deque()
         self._full_transcript: List[Tuple[float, str, str]] = []
+
+    def set_session_type(self, session_type: str) -> None:
+        self._session_type = session_type
+
+    def get_session_type(self) -> str:
+        return self._session_type
+
+    def clear_transcript(self) -> None:
+        self._transcript.clear()
+        self._full_transcript.clear()
 
     def transcript_snapshot(self) -> List[Tuple[float, str, str]]:
         """(timestamp, source, text) tuples within rolling window."""
@@ -141,27 +219,28 @@ class AudioListener(QThread):
             return cb
 
         streams: List[sd.InputStream] = []
+        mic_rate = SAMPLE_RATE
+        sys_rate = SAMPLE_RATE
+
         try:
             if self._capture_mic:
-                streams.append(
-                    sd.InputStream(
-                        device=None,
-                        channels=1,
-                        samplerate=SAMPLE_RATE,
-                        dtype="float32",
-                        callback=make_cb(mic_q),
-                        blocksize=1024,
-                    )
-                )
+                try:
+                    s, mic_rate = _create_stream(None, make_cb(mic_q))
+                    streams.append(s)
+                except Exception as e:
+                    logger.warning("Microphone stream open failed: %s", e)
+
             if self._capture_system:
                 lb = self._loopback_device
                 if lb is None:
                     lb = find_loopback_device_index()
                 if lb is None:
-                    logger.warning("No WASAPI loopback device found; system capture disabled")
+                    logger.warning("No loopback device found; system capture disabled")
                 else:
                     try:
-                        streams.append(_open_loopback_stream(lb, make_cb(sys_q)))
+                        s, sys_rate = _create_stream(lb, make_cb(sys_q))
+                        streams.append(s)
+                        logger.info("Opened loopback stream on device index %d at %d Hz", lb, sys_rate)
                     except Exception as e:
                         logger.exception("Loopback stream open failed")
                         logger.warning("System audio capture disabled: %s", e)
@@ -191,13 +270,16 @@ class AudioListener(QThread):
                     audio = np.concatenate(mic_buf)
                     mic_buf = []
                     last_mic_proc = now
-                    self._process_audio(model, audio, "Mic")
+                    audio_16k = resample_to_16k(audio, mic_rate)
+                    self._process_audio(model, audio_16k, "Mic")
 
                 if self._capture_system and now - last_sys_proc >= CHUNK_INTERVAL_SEC and sys_buf:
                     audio = np.concatenate(sys_buf)
                     sys_buf = []
                     last_sys_proc = now
-                    self._process_audio(model, audio, "System")
+                    audio_16k = resample_to_16k(audio, sys_rate)
+                    source_label = "Lecturer" if self._session_type == "lecture" else "System"
+                    self._process_audio(model, audio_16k, source_label)
 
                 self._prune_transcript()
                 self.msleep(40)
