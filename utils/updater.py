@@ -80,6 +80,8 @@ def default_state() -> Dict[str, object]:
         "popup_count": 0,
         "snooze_until_epoch": 0,
         "failed_attempts": 0,
+        "last_check_epoch": 0,
+        "last_release_json": None,
     }
 
 
@@ -244,19 +246,41 @@ def check_for_update(
     state_path: Path = STATE_PATH,
     now: Optional[int] = None,
 ) -> Optional[UpdateCheck]:
-    """Full check: fetch → evaluate → persist state. None = skip silently."""
-    fetched = fetch_latest_release()
-    if fetched is None:
-        return None  # offline / rate-limited / bad payload → never nag, never lock
-    release, server_now = fetched
-    if os.environ.get("GHOSTMIND_FORCE_UPDATE", "").strip() == "1":
-        release = dict(release)
-        release["tag_name"] = "v999.0.0"
-        release.setdefault("body", "QA forced update")
+    """Full check: fetch (or reuse <6h cache) → evaluate → persist state.
 
-    now = now if now is not None else server_now
+    None = skip silently (offline with no recent cache). The response cache
+    in the state file guarantees GitHub is never contacted more than once
+    per 6h window, even across app restarts.
+    """
     state = load_state(state_path)
-    result = evaluate_check(release, local_version, state, now)
+    now = int(time.time()) if now is None else now
+
+    release: Optional[dict] = None
+    server_now = now
+    fetched = fetch_latest_release()
+    if fetched is not None:
+        release, server_now = fetched
+        if os.environ.get("GHOSTMIND_FORCE_UPDATE", "").strip() == "1":
+            release = dict(release)
+            release["tag_name"] = "v999.0.0"
+            release.setdefault("body", "QA forced update")
+        state["last_check_epoch"] = server_now
+        # Cache only what evaluation/download needs (keeps the file small).
+        state["last_release_json"] = {
+            "tag_name": release.get("tag_name"),
+            "body": release.get("body"),
+            "assets": release.get("assets") or [],
+        }
+    elif now - int(state.get("last_check_epoch") or 0) < CHECK_INTERVAL_SEC:
+        cached = state.get("last_release_json")
+        if isinstance(cached, dict) and cached.get("tag_name"):
+            release = cached
+            server_now = now  # no fresh server Date; local time is close enough
+
+    if release is None:
+        return None  # offline / rate-limited / bad payload → never nag, never lock
+
+    result = evaluate_check(release, local_version, state, server_now)
     if result.state is not None and result.state != state:
         save_state(result.state, state_path)
     return result

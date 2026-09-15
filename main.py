@@ -527,9 +527,28 @@ class GhostMindController(QObject):
         from ui.update_popup import UpdatePopup
 
         self._update_popup = UpdatePopup(check, locked=locked)
+        self._update_popup.finished.connect(self._on_update_popup_finished)
         self._update_popup.show()
         self._update_popup.raise_()
         self._update_popup.activateWindow()
+
+    def _restore_from_update_lock(self) -> None:
+        """Undo _enter_update_lock (safety valve bought the user 24h)."""
+        if not self._update_locked:
+            return
+        self._update_locked = False
+        self.overlay.setEnabled(True)
+        self._register_hotkeys()
+        for act in self._tray_actions:
+            act.setEnabled(True)
+        logger.info("Update lock lifted via safety valve (24h snooze)")
+
+    def _on_update_popup_finished(self, _result: int) -> None:
+        # The safety valve snoozes ~24h; if the state file now has an active
+        # snooze, restore the UI immediately instead of waiting for the next check.
+        state = updater.load_state()
+        if int(state.get("snooze_until_epoch") or 0) > time.time():
+            self._restore_from_update_lock()
 
     def _enter_update_lock(self, check: Any) -> None:
         """Grace expired: hide overlay, kill hotkeys, reduce tray, force popup."""

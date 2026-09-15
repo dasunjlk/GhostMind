@@ -257,6 +257,29 @@ class TestStatePersistence:
         assert out is not None and out.update_available
         assert out.tag == "999.0.0"
 
+    def test_response_cached_within_6h_across_restarts(self, tmp_path, monkeypatch):
+        path = tmp_path / "s.json"
+        calls = {"n": 0}
+
+        def fake_fetch(timeout=10.0):
+            calls["n"] += 1
+            return (_release("1.1.0"), 5000)
+
+        monkeypatch.setattr(updater, "fetch_latest_release", fake_fetch)
+        out1 = updater.check_for_update("1.0.0", state_path=path, now=1000)
+        assert out1 is not None and out1.update_available
+
+        # Network now down, but within the 6h window → cached release is used.
+        monkeypatch.setattr(updater, "fetch_latest_release", lambda timeout=10.0: None)
+        out2 = updater.check_for_update("1.0.0", state_path=path, now=1000 + 3600)
+        assert out2 is not None and out2.update_available and out2.tag == "1.1.0"
+        assert calls["n"] == 1, "must not re-contact GitHub within the 6h window"
+
+        # Outside the window with no network → silently skip.
+        out3 = updater.check_for_update("1.0.0", state_path=path, now=1000 + 8 * 3600)
+        assert out3 is None
+        assert calls["n"] == 1
+
 
 # --------------------------------------------------------------------------- #
 # Popup/snooze bookkeeping
