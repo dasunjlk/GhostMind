@@ -113,6 +113,14 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
 
     "whisper_model": "base",
     "loopback_device": None,
+
+    # Window geometry persistence (restored on launch, saved on move/resize/hide)
+    "window_x": None,
+    "window_y": None,
+    "window_w": 480,
+    "window_h": 600,
+    "window_screen": None,
+
     "hotkeys": {
         "toggle_visibility": "ctrl+shift+g",
         "screen_scan": "ctrl+shift+s",
@@ -247,6 +255,7 @@ class GhostMindController(QObject):
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
+        self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
@@ -277,6 +286,15 @@ class GhostMindController(QObject):
         self.overlay.apply_settings(self.settings)
         self._register_hotkeys()
         self._start_audio_if_needed()
+
+    def _on_geometry_changed(self, geom: Dict[str, Any]) -> None:
+        """Persist window geometry.
+
+        Deliberately lightweight: saving settings on every drag must NOT go
+        through _on_settings_changed, which restarts the AudioListener.
+        """
+        self.settings.update(geom)
+        save_settings(self.settings)
 
     def _start_audio_if_needed(self) -> None:
         if self._audio is not None:

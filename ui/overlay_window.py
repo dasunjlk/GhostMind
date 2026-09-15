@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import (
+    QAbstractAnimation,
     QEasingCurve,
     QObject,
     QPoint,
@@ -20,6 +21,7 @@ from PyQt6.QtCore import (
 )
 from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QKeyEvent, QMouseEvent
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -113,6 +115,7 @@ def _is_worker_active(worker: Optional[QThread]) -> bool:
 
 class OverlayWindow(QMainWindow):
     settings_changed = pyqtSignal(dict)
+    geometry_changed = pyqtSignal(dict)
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
@@ -128,6 +131,11 @@ class OverlayWindow(QMainWindow):
         self._scan_worker: Optional[ScreenScanWorker] = None
         self._visible_target = True
         self.close_event_allowed = True
+        self._opacity_anim: Optional[QVariantAnimation] = None
+        self._restoring_geometry = False
+        self._geometry_save_timer = QTimer(self)
+        self._geometry_save_timer.setSingleShot(True)
+        self._geometry_save_timer.timeout.connect(self._emit_geometry)
 
         _load_fonts(repo_root)
 
@@ -139,6 +147,7 @@ class OverlayWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(480, 600)
         self.setMinimumSize(320, 360)
+        self._restore_window_geometry()
 
         ico_path = self._repo_root / "assets" / "icon.ico"
         if ico_path.is_file():
@@ -255,7 +264,6 @@ class OverlayWindow(QMainWindow):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._trigger_scan)
 
-        self._opacity_anim: Optional[QVariantAnimation] = None
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
 
         self._header_drag = _HeaderDragFilter(self)
@@ -437,10 +445,80 @@ class OverlayWindow(QMainWindow):
     def moveEvent(self, e) -> None:
         super().moveEvent(e)
         self._reapply_stealth()
+        self._schedule_geometry_save()
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._reapply_stealth()
+        self._schedule_geometry_save()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self._flush_geometry_save()
+
+    # --- window geometry persistence (R-04) ---
+    def _restore_window_geometry(self) -> None:
+        """Restore last saved size/position, clamped into available screen space."""
+        self._restoring_geometry = True
+        try:
+            w = self._settings.get("window_w")
+            h = self._settings.get("window_h")
+            if isinstance(w, int) and isinstance(h, int) and w >= 320 and h >= 360:
+                self.resize(w, h)
+            x = self._settings.get("window_x")
+            y = self._settings.get("window_y")
+            if isinstance(x, int) and isinstance(y, int):
+                self.move(self._clamped_position(QPoint(x, y)))
+        finally:
+            self._restoring_geometry = False
+
+    def _clamped_position(self, pos: QPoint) -> QPoint:
+        """Clamp a stored position into visible screen space.
+
+        Handles a disconnected monitor gracefully: falls back to the stored
+        screen name, then to the primary screen, so the window can never be
+        restored stranded offscreen.
+        """
+        screen = QApplication.screenAt(pos)
+        if screen is None:
+            name = self._settings.get("window_screen")
+            screen = next(
+                (s for s in QApplication.screens() if s.name() == name), None
+            ) or QApplication.primaryScreen()
+        if screen is None:
+            return pos
+        avail = screen.availableGeometry()
+        margin = 40
+        x = max(avail.left() - self.width() + margin, min(pos.x(), avail.right() - margin))
+        y = max(avail.top(), min(pos.y(), avail.bottom() - margin))
+        return QPoint(x, y)
+
+    def _schedule_geometry_save(self) -> None:
+        """Debounce geometry persistence; skip during restore and fade animations."""
+        if self._restoring_geometry:
+            return
+        if self._opacity_anim is not None and self._opacity_anim.state() == QAbstractAnimation.State.Running:
+            return
+        self._geometry_save_timer.start(500)
+
+    def _flush_geometry_save(self) -> None:
+        """Persist geometry immediately (e.g. when the window hides)."""
+        self._geometry_save_timer.stop()
+        if not self._restoring_geometry:
+            self._emit_geometry()
+
+    def _emit_geometry(self) -> None:
+        g = self.geometry()
+        screen = QApplication.screenAt(g.center())
+        self.geometry_changed.emit(
+            {
+                "window_x": g.x(),
+                "window_y": g.y(),
+                "window_w": g.width(),
+                "window_h": g.height(),
+                "window_screen": screen.name() if screen else self._settings.get("window_screen"),
+            }
+        )
 
     def _edge_at(self, pos: QPoint) -> Edge:
         g = self.geometry()
@@ -517,6 +595,7 @@ class OverlayWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         """Intercept close: hide to tray unless close_event_allowed is True."""
+        self._flush_geometry_save()
         if not self.close_event_allowed:
             e.ignore()
             self.closeRequested.emit()
