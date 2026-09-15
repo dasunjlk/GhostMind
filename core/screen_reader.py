@@ -1,5 +1,5 @@
 """
-Multi-monitor capture (mss), OCR (pytesseract), optional OpenCV preprocessing.
+Multi-monitor capture (mss), OCR (pytesseract), window context detection, and optional OpenCV preprocessing.
 """
 from __future__ import annotations
 
@@ -23,6 +23,60 @@ try:
     import pytesseract
 except ImportError:  # pragma: no cover
     pytesseract = None  # type: ignore
+
+
+def get_active_window_title() -> str:
+    """Return the title of the current foreground window on Windows."""
+    try:
+        import win32gui
+        hwnd = win32gui.GetForegroundWindow()
+        if hwnd:
+            title = win32gui.GetWindowText(hwnd).strip()
+            # Ignore our own overlay window if it was foreground
+            if "ghostmind" not in title.lower():
+                return title
+    except Exception as e:
+        logger.debug("Failed to get foreground window title: %s", e)
+    return ""
+
+
+def detect_meeting_app() -> Optional[str]:
+    """Detect if a meeting application (Zoom, Meet, Teams, Webex, Discord) is active or running."""
+    fg = get_active_window_title().lower()
+    if "zoom" in fg:
+        return "Zoom"
+    if "meet" in fg or "meet.google.com" in fg:
+        return "Google Meet"
+    if "teams" in fg:
+        return "Microsoft Teams"
+    if "webex" in fg:
+        return "Cisco Webex"
+    if "discord" in fg:
+        return "Discord"
+
+    try:
+        import win32gui
+        found: List[str] = []
+
+        def enum_cb(hwnd: int, _: Any) -> None:
+            if win32gui.IsWindowVisible(hwnd):
+                t = win32gui.GetWindowText(hwnd).lower()
+                if "zoom meeting" in t or (t.startswith("zoom") and "zoom" not in found):
+                    found.append("Zoom")
+                elif "meet -" in t or "google meet" in t:
+                    found.append("Google Meet")
+                elif "microsoft teams" in t:
+                    found.append("Microsoft Teams")
+                elif "webex" in t:
+                    found.append("Cisco Webex")
+
+        win32gui.EnumWindows(enum_cb, None)
+        if found:
+            return found[0]
+    except Exception as e:
+        logger.debug("Meeting app window enumeration error: %s", e)
+
+    return None
 
 
 def get_monitors() -> List[Dict[str, Any]]:
@@ -77,9 +131,22 @@ def _preprocess_for_ocr(img: Image.Image) -> Image.Image:
 
 def extract_text(image: Image.Image, preprocess: bool = True) -> str:
     if pytesseract is None:
-        raise RuntimeError("pytesseract is not installed")
+        raise RuntimeError(
+            "pytesseract is not installed. "
+            "Install it with: pip install pytesseract\n"
+            "You also need Tesseract OCR on PATH: choco install tesseract"
+        )
     work = _preprocess_for_ocr(image) if preprocess else image
-    text = pytesseract.image_to_string(work)
+    try:
+        text = pytesseract.image_to_string(work)
+    except pytesseract.TesseractNotFoundError:
+        raise RuntimeError(
+            "Tesseract executable not found on PATH.\n"
+            "Install Tesseract: choco install tesseract\n"
+            "Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
+        )
+    except Exception as e:
+        raise RuntimeError(f"OCR failed: {e}")
     return (text or "").strip()
 
 
@@ -88,8 +155,21 @@ def scan_and_extract(monitor_id: int, preprocess: bool = True) -> str:
     return extract_text(img, preprocess=preprocess)
 
 
+def get_screen_context(monitor_id: int, preprocess: bool = True) -> Dict[str, Any]:
+    """Capture screen and gather active window and app context."""
+    text = scan_and_extract(monitor_id, preprocess=preprocess)
+    active_title = get_active_window_title()
+    meeting_app = detect_meeting_app()
+    return {
+        "ocr_text": text,
+        "active_window": active_title,
+        "meeting_app": meeting_app,
+    }
+
+
 class ScreenScanWorker(QThread):
     finished_ok = pyqtSignal(str)
+    finished_details = pyqtSignal(dict)
     failed = pyqtSignal(str)
 
     def __init__(self, monitor_id: int, parent: Optional[QObject] = None) -> None:
@@ -98,8 +178,25 @@ class ScreenScanWorker(QThread):
 
     def run(self) -> None:
         try:
+            active_title = get_active_window_title()
+            meeting_app = detect_meeting_app()
             text = scan_and_extract(self._monitor_id)
-            self.finished_ok.emit(text)
+            
+            # Enrich text with active window context if available
+            combined = text
+            if active_title and "ghostmind" not in active_title.lower():
+                header = f"[Active Window: {active_title}]"
+                if meeting_app:
+                    header += f" [Meeting App: {meeting_app}]"
+                combined = f"{header}\n\n{text}" if text else header
+
+            self.finished_details.emit({
+                "ocr_text": text,
+                "active_window": active_title,
+                "meeting_app": meeting_app,
+                "combined_text": combined,
+            })
+            self.finished_ok.emit(combined)
         except Exception as e:
             logger.exception("Screen scan failed")
             self.failed.emit(str(e))

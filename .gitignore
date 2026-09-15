@@ -20,6 +20,7 @@ ENV/
 
 # Logs and local data
 *.log
+TODO.md
 
 # User-specific configuration (generated on first run)
 config/settings.toml

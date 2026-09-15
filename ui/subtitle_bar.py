@@ -1,5 +1,5 @@
 """
-Live subtitle ticker: last few lines, question highlighting, Mic/System labels.
+Live subtitle ticker: last few lines, question highlighting, Mic/System/Lecturer labels, and summarize action.
 """
 from __future__ import annotations
 
@@ -7,21 +7,29 @@ import re
 from collections import deque
 from typing import Deque
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
-from PyQt6.QtWidgets import QFrame, QTextEdit, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
 
 _QUESTION_RE = re.compile(
-    r"(^|\b)(who|what|when|where|why|how|could you|can you|should we|is it|are we)\b",
+    r"(^|\b)(who|what|when|where|why|how|could you|can you|should we|is it|are we|"
+    r"do you|did you|will you|would you|shall we|let me ask|tell me|explain|define|"
+    r"which|whose|whom|how much|how many|how long|how far|how often|how old|"
+    r"is there|are there|was there|were there|have you|has there|"
+    r"can we|could we|should I|would it|do we|does it|"
+    r"what about|what if|what's|what does|what do)\b",
     re.IGNORECASE,
 )
 
 
 class SubtitleBar(QWidget):
+    save_requested = pyqtSignal()
+    summarize_requested = pyqtSignal()
+
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._lines: Deque[str] = deque(maxlen=6)
+        self._lines: Deque[str] = deque(maxlen=8)
         self._view = QTextEdit()
         self._view.setReadOnly(True)
         self._view.setFrameShape(QFrame.Shape.NoFrame)
@@ -34,8 +42,36 @@ class SubtitleBar(QWidget):
             "border-radius: 6px; font-size: 13px; }"
         )
 
+        header = QHBoxLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        hint = QLabel("Ctrl+Shift+E to export")
+        hint.setStyleSheet("color:#555;font-size:10px;")
+        header.addWidget(hint)
+        header.addStretch(1)
+
+        sum_btn = QPushButton("⚡ Summarize")
+        sum_btn.setToolTip("Summarize audio discussion / lecture")
+        sum_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        sum_btn.setStyleSheet(
+            "QPushButton { background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:3px 10px; font-size:11px; border-radius:3px; }"
+            "QPushButton:hover { background:#1E3E2B; }"
+        )
+        sum_btn.clicked.connect(self.summarize_requested.emit)
+        header.addWidget(sum_btn)
+        header.addSpacing(6)
+
+        save_btn = QPushButton("Save")
+        save_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        save_btn.setStyleSheet(
+            "QPushButton { background:#1A1A1A;color:#E0E0E0;border:1px solid #333;padding:3px 10px; font-size:11px; border-radius:3px; }"
+            "QPushButton:hover { background:#252525;color:#FFF; }"
+        )
+        save_btn.clicked.connect(self.save_requested.emit)
+        header.addWidget(save_btn)
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.addLayout(header)
         lay.addWidget(self._view)
 
     def append_line(self, line: str) -> None:
@@ -50,7 +86,7 @@ class SubtitleBar(QWidget):
         self._view.clear()
 
     def _render(self) -> None:
-        visible = list(self._lines)[-4:]
+        visible = list(self._lines)[-5:]
         self._view.clear()
         cursor = self._view.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.Start)
@@ -60,6 +96,9 @@ class SubtitleBar(QWidget):
 
         label_fmt = QTextCharFormat()
         label_fmt.setForeground(QColor("#00FF88"))
+
+        lecturer_fmt = QTextCharFormat()
+        lecturer_fmt.setForeground(QColor("#40C4FF"))
 
         question_fmt = QTextCharFormat()
         question_fmt.setForeground(QColor("#FFD700"))
@@ -71,9 +110,12 @@ class SubtitleBar(QWidget):
                 speaker, rest = "Mic", ln[4:].strip()
             elif ln.startswith("System:"):
                 speaker, rest = "System", ln[7:].strip()
+            elif ln.startswith("Lecturer:"):
+                speaker, rest = "Lecturer", ln[9:].strip()
 
             if speaker:
-                cursor.setCharFormat(label_fmt)
+                fmt = lecturer_fmt if speaker == "Lecturer" else label_fmt
+                cursor.setCharFormat(fmt)
                 cursor.insertText(f"{speaker}: ")
             is_q = "?" in rest or bool(_QUESTION_RE.search(rest))
             cursor.setCharFormat(question_fmt if is_q else normal)

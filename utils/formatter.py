@@ -18,6 +18,9 @@ def parse_and_render(text: str) -> str:
 
     Supports:
     - ``` fenced code blocks (optional language line)
+    - #, ##, ### Headings
+    - --- / *** / ___ Horizontal rules
+    - > Blockquotes / Answer callouts
     - **bold**, *italic*
     - `inline code`
     - bullet lines (- or *)
@@ -66,7 +69,14 @@ def parse_and_render(text: str) -> str:
             return
         inner = " ".join(render_inline(x) for x in buf if x.strip())
         if inner.strip():
-            out.append(f'<p style="margin:6px 0;color:#E0E0E0;">{inner}</p>')
+            # Check for answer badge formatting
+            if inner.startswith("<b>Answer:</b>") or inner.startswith("<b>ANSWER:</b>"):
+                out.append(
+                    f'<div style="background:#0F2A1C;border:1px solid #00FF88;border-radius:4px;'
+                    f'padding:8px 12px;margin:8px 0;color:#E0FFE0;">{inner}</div>'
+                )
+            else:
+                out.append(f'<p style="margin:6px 0;color:#E0E0E0;">{inner}</p>')
         buf.clear()
 
     para_buf: List[str] = []
@@ -99,6 +109,48 @@ def parse_and_render(text: str) -> str:
             i += 1
             continue
 
+        # Horizontal rule
+        if re.match(r"^(\-{3,}|\*{3,}|_{3,})$", stripped):
+            flush_paragraph(para_buf)
+            out.append('<hr style="border:none;border-top:1px solid #224433;margin:8px 0;"/>')
+            i += 1
+            continue
+
+        # Headings (#, ##, ###)
+        heading_match = re.match(r"^(#{1,3})\s+(.+)$", stripped)
+        if heading_match:
+            flush_paragraph(para_buf)
+            level = len(heading_match.group(1))
+            heading_text = render_inline(heading_match.group(2))
+            if level == 1:
+                out.append(
+                    f'<h1 style="color:#00FF88;font-size:15px;margin:8px 0 4px 0;'
+                    f'font-weight:bold;border-bottom:1px solid #1A3A2A;padding-bottom:2px;">{heading_text}</h1>'
+                )
+            elif level == 2:
+                out.append(
+                    f'<h2 style="color:#00FF88;font-size:14px;margin:6px 0 3px 0;font-weight:bold;">{heading_text}</h2>'
+                )
+            else:
+                out.append(
+                    f'<h3 style="color:#66FFAA;font-size:13px;margin:4px 0 2px 0;font-weight:bold;">{heading_text}</h3>'
+                )
+            i += 1
+            continue
+
+        # Blockquote (> text)
+        blockquote_match = re.match(r"^>\s*(.+)$", stripped)
+        if blockquote_match:
+            flush_paragraph(para_buf)
+            quote_text = render_inline(blockquote_match.group(1))
+            out.append(
+                f'<div style="border-left:3px solid #00FF88;padding:4px 10px;margin:6px 0;'
+                f'background:#0D1A14;color:#B0E8D0;">{quote_text}</div>'
+            )
+            i += 1
+            continue
+
+        # Bullet lists (- or *)
         bullet = re.match(r"^[\-\*]\s+(.+)$", stripped)
         if bullet:
             flush_paragraph(para_buf)
@@ -110,6 +162,7 @@ def parse_and_render(text: str) -> str:
             i += 1
             continue
 
+        # Numbered lists (1. item)
         numbered = re.match(r"^(\d+)\.\s+(.+)$", stripped)
         if numbered:
             flush_paragraph(para_buf)
