@@ -134,13 +134,24 @@ Created when you click **Save** in settings. Keys include:
 
 Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
 
+## Updates
+
+GhostMind checks GitHub **once at launch and every 6 hours** while running (cached — never more than one check per 6h window, even across restarts).
+
+- **Update available** → a popup shows the release notes. During the first **5 days** you can close it and keep using the current version ("Later" snoozes it for 24h).
+- **After 5 days** the popup can no longer be closed: use **Update Now** to download `GhostMind-Setup-<version>.exe` (SHA-256 verified against `SHA256SUMS.txt` before it runs) — the installer closes GhostMind; start GhostMind again when it finishes.
+- **Safety valve:** if downloads keep failing after the grace period (e.g. GitHub is unreachable), a **Continue for 24 hours** option appears — it re-locks after 24h. A machine that is fully offline is never locked out.
+- Fully automatic: no user data leaves your machine; only GitHub is contacted to check/download releases.
+
+QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases URL, `file://` JSON works), `GHOSTMIND_FORCE_UPDATE=1`, `GHOSTMIND_GRACE_DAYS=0`.
+
 ## Troubleshooting
 
 - **`TesseractNotFoundError` / empty OCR**  
   Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
 
 - **Invalid / missing API key**  
-  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The default model used is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`.
+  Paste your key in **Settings → AI & API** and hit **Save** — the app checks the key and model immediately and shows the problem inline. Keys are stored in Windows Credential Manager. Free keys at the [Groq console](https://console.groq.com). The default model is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`; use **＋ Add custom model…** for any other Groq model ID.
 
 
 - **No microphone or loopback device**  

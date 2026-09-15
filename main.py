@@ -23,7 +23,9 @@ from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
+from utils import updater
 from utils.hotkey_manager import HotkeyManager
+from version import __version__
 
 
 
@@ -229,6 +231,15 @@ class GhostMindController(QObject):
         self._meeting_timer.setSingleShot(True)
         self._meeting_timer.timeout.connect(self._flush_meeting_question)
 
+        # --- Updates (U-01): 6-hour re-check + lock bookkeeping ---
+        self._update_popup: Optional[Any] = None
+        self._last_update_check: Optional[Any] = None
+        self._update_locked = False
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
+        self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
+        self._update_timer.start()
+
         # --- System tray ---
         self._tray = QSystemTrayIcon(self)
         self._tray.setIcon(_create_tray_icon())
@@ -258,6 +269,11 @@ class GhostMindController(QObject):
         self._tray.setContextMenu(tray_menu)
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
+
+        # Tray actions kept as members so update-lock mode can dim them (3.5).
+        self._tray_actions = [show_action, hide_action, export_action]
+        self._tray_menu = tray_menu
+        self._tray.messageClicked.connect(self._on_balloon_clicked)
 
         # Close button hides to tray instead of quitting
         self.overlay.close_event_allowed = False
@@ -361,15 +377,23 @@ class GhostMindController(QObject):
 
     # --- tray actions ---
     def _tray_show(self) -> None:
+        if self._update_locked:
+            return  # overlay stays hidden while the update lock is active
         if not self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
 
     def _tray_hide(self) -> None:
+        if self._update_locked:
+            return
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            if self._update_locked:
+                if self._last_update_check is not None:
+                    self._show_update_popup(self._last_update_check, locked=True)
+                return
             self.overlay.toggle_visibility_animated()
 
     def _tray_quit(self) -> None:
@@ -471,6 +495,70 @@ class GhostMindController(QObject):
         context_type = "meeting_question" if "?" in text else ("meeting_audio" if st == "meeting" else "lecture_notes")
         self.overlay.request_ai_answer(text, context_type)
 
+    # --- updates (U-01) -----------------------------------------------------
+
+    def initial_update_check(self) -> None:
+        """Launch-time check (deferred by a QTimer in main() so startup never blocks)."""
+        self._run_update_check(show_balloon=True)
+
+    def _run_update_check(self, show_balloon: bool = False) -> None:
+        result = updater.check_for_update(__version__)
+        if result is None:
+            return  # offline / rate-limited → silently skip (never nag, never lock)
+        self._last_update_check = result
+        if not result.update_available:
+            return
+        if show_balloon and result.first_popup_for_version:
+            self._tray.showMessage(
+                "GhostMind",
+                f"GhostMind {result.tag} available — click for details",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+        if result.locked:
+            self._enter_update_lock(result)
+        elif result.should_popup:
+            self._show_update_popup(result, locked=False)
+
+    def _show_update_popup(self, check: Any, locked: bool) -> None:
+        # Never stack popups (6h timer can fire while one is open).
+        if self._update_popup is not None and self._update_popup.isVisible():
+            return
+        from ui.update_popup import UpdatePopup
+
+        self._update_popup = UpdatePopup(check, locked=locked)
+        self._update_popup.show()
+        self._update_popup.raise_()
+        self._update_popup.activateWindow()
+
+    def _enter_update_lock(self, check: Any) -> None:
+        """Grace expired: hide overlay, kill hotkeys, reduce tray, force popup."""
+        if self._update_locked and self._update_popup is not None and self._update_popup.isVisible():
+            return
+        self._update_locked = True
+        logger.warning("Update lock engaged (newer version %s, grace expired)", check.tag)
+        if self.overlay.isVisible():
+            self.overlay.toggle_visibility_animated()
+        self.overlay.setEnabled(False)
+        self.hotkeys.unregister_all()
+        for act in self._tray_actions:
+            act.setEnabled(False)
+        if not hasattr(self, "_update_tray_action"):
+            self._tray_menu.addSeparator()
+            self._update_tray_action = QAction("Update now", self)
+            self._update_tray_action.triggered.connect(
+                lambda: self._last_update_check and self._show_update_popup(self._last_update_check, locked=True)
+            )
+            self._tray_menu.addAction(self._update_tray_action)
+        self._show_update_popup(check, locked=True)
+
+    def _on_balloon_clicked(self) -> None:
+        if self._last_update_check is not None and self._last_update_check.update_available:
+            if self._last_update_check.locked or self._update_locked:
+                self._show_update_popup(self._last_update_check, locked=True)
+            else:
+                self._show_update_popup(self._last_update_check, locked=False)
+
 
 def main() -> int:
     load_dotenv(REPO_ROOT / ".env")
@@ -496,6 +584,9 @@ def main() -> int:
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)
+
+    # U-01: first update check shortly after launch (network must not block startup)
+    QTimer.singleShot(1500, ctrl.initial_update_check)
 
     def _sigint(*_args) -> None:
         logger.info("SIGINT — quitting")
