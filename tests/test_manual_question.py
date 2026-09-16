@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QLineEdit
 
@@ -69,10 +69,40 @@ class TestAskRowUI:
         assert sent == [("What is the capital of France?", "manual")]
         assert overlay._ask_input.text() == "", "box must be empty after sending"
 
+    def test_user_message_bubble_shown_for_chat(self, overlay, monkeypatch):
+        """Typed messages echo as a user bubble; scan flows do not."""
+        from PyQt6.QtCore import pyqtSignal
+        from ui.answer_panel import AnswerPanel
+
+        calls: list = []
+        monkeypatch.setattr(
+            AnswerPanel, "add_user_message", lambda self, t: calls.append(t)
+        )
+
+        monkeypatch.setattr(OverlayWindow, "_start_ai", lambda self, c, t: None)
+        QTest.keyClicks(overlay._ask_input, "hello there")
+        QTest.keyClick(overlay._ask_input, Qt.Key.Key_Return)
+        assert calls == ["hello there"], "chat send must add a user bubble"
+
+        # Scan flow: bubble must NOT appear
+        class _FakeScanWorker(QObject):
+            finished = pyqtSignal()
+            finished_ok = pyqtSignal(str)
+            failed = pyqtSignal(str)
+
+            def __init__(self, monitor_id: int) -> None:
+                super().__init__()
+
+            def start(self) -> None:
+                pass
+
+        monkeypatch.setattr(overlay_window, "ScreenScanWorker", _FakeScanWorker)
+        calls.clear()
+        overlay.trigger_screen_scan()
+        assert calls == [], "scan flow must not add a user bubble"
+
     def test_send_rejected_keeps_text(self, overlay):
         """Busy (another answer streaming): typed text must not be lost."""
-
-        from PyQt6.QtCore import QObject
 
         class _BusyWorker(QObject):
             def isRunning(self) -> bool:

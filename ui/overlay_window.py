@@ -528,6 +528,9 @@ class OverlayWindow(QMainWindow):
             self._answer_panel.end_stream_error("Already processing another answer.")
             return
         self._ask_input.clear()  # accepted: free the box for the next question
+        # Chat-style: echo the user's message in the panel. Scan/OCR answers do
+        # not get this bubble — only typed messages do (F-01).
+        self._answer_panel.add_user_message(text)
         self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:

@@ -180,6 +180,30 @@ class AnswerPanel(QWidget):
         bar = self._scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def add_user_message(self, text: str) -> None:
+        """Show the user's typed question as a right-aligned chat bubble.
+
+        Only used for manual chat input (F-01); OCR/scan flows keep their
+        existing presentation without a user bubble.
+        """
+        bubble = QWidget(self._inner)
+        v = QVBoxLayout(bubble)
+        v.setContentsMargins(0, 2, 0, 2)
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setMaximumWidth(380)
+        lbl.setStyleSheet(
+            "QLabel { background:#162B1E; color:#DFFFEF; border:1px solid #00FF88;"
+            " border-radius:8px; padding:6px 10px; font-size:12px; }"
+        )
+        row = QHBoxLayout()
+        row.addStretch(1)  # push the bubble to the right edge
+        row.addWidget(lbl)
+        v.addLayout(row)
+        self._inner_layout.addWidget(bubble)
+        self._scroll_to_bottom()
+
     def start_thinking(self) -> None:
         self._hide_thinking()
         self._stream_buffer = ""
