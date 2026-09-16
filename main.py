@@ -20,7 +20,7 @@ from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, 
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from core.ai_engine import DEFAULT_MODEL
-from core.audio_listener import AudioListener
+from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
 from utils import updater
@@ -225,6 +225,15 @@ class GhostMindController(QObject):
         self.settings = dict(settings)
         self.overlay = OverlayWindow(self.settings, REPO_ROOT)
         self.hotkeys = HotkeyManager(self)
+
+        # Probe audio hardware once: mic icon gets a warning badge if no input
+        # device exists (Zoom-style "no microphone" indicator).
+        try:
+            mic_present = has_microphone()
+        except Exception as e:  # never let detection block startup
+            logger.warning("microphone probe failed: %s", e)
+            mic_present = False
+        self.overlay.set_microphone_available(mic_present)
 
         self._audio: Optional[AudioListener] = None
         self._meeting_timer = QTimer(self)

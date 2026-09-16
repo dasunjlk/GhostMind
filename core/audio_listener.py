@@ -42,6 +42,19 @@ def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
     ).astype(np.float32)
 
 
+def has_microphone() -> bool:
+    """True if the system reports at least one audio input (microphone) device.
+
+    Treats sounddevice/PortAudio errors as 'no mic' so callers can warn instead of
+    crashing; devices with zero input channels don't count (output-only devices).
+    """
+    try:
+        return len(get_input_devices()) > 0
+    except Exception as e:  # PortAudio can raise on headless / broken audio stacks
+        logger.warning("microphone detection failed: %s", e)
+        return False
+
+
 def get_input_devices() -> List[Dict[str, Any]]:
     """Return all available input audio devices across host APIs."""
     devices = []

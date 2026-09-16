@@ -70,7 +70,7 @@ The ⚡ **Scan** button in the overlay's header bar triggers the same action as 
 
 Next to the Scan button, two small icons let you enable/disable audio sources without opening Settings — click to toggle:
 
-- 🎙 **Microphone capture** — shows a red slash when off (Zoom-style)
+- 🎙 **Microphone capture** — shows a red slash when off (Zoom-style); if your system has no microphone at all, the icon shows an amber "❗" warning badge instead
 - 🔊 **System audio capture** — same slash treatment
 
 Enable either one alone, both together, or neither. Changes take effect immediately (same as saving on the Audio tab); the icons stay in sync with the Audio tab checkboxes.

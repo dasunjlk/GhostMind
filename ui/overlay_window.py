@@ -121,14 +121,29 @@ class _CaptureIconWidget(QWidget):
 
     toggled = pyqtSignal(bool)
 
-    def __init__(self, kind: str, enabled: bool, tooltip_base: str, parent=None) -> None:
+    def __init__(
+        self,
+        kind: str,
+        enabled: bool,
+        tooltip_base: str,
+        has_device: bool = True,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self._kind = kind
         self._on = bool(enabled)
+        self._has_device = bool(has_device)
         self._tooltip_base = tooltip_base
         self.setFixedSize(26, 26)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setToolTip(self._tooltip_text())
+
+    def set_has_device(self, has: bool) -> None:
+        """Mark the hardware missing (mic icon shows an amber "!" badge)."""
+        if self._has_device != bool(has):
+            self._has_device = bool(has)
+            self.update()
+            self.setToolTip(self._tooltip_text())
 
     def is_on(self) -> bool:
         return self._on
@@ -140,6 +155,8 @@ class _CaptureIconWidget(QWidget):
             self.setToolTip(self._tooltip_text())
 
     def _tooltip_text(self) -> str:
+        if self._kind == "mic" and not self._has_device:
+            return f"{self._tooltip_base} — no microphone detected on this system"
         return f"{self._tooltip_base} — {'on' if self._on else 'off'} (click to toggle)"
 
     def mousePressEvent(self, a0) -> None:  # noqa: N802 (Qt naming)
@@ -197,6 +214,13 @@ class _CaptureIconWidget(QWidget):
             p.setPen(pen)
             for ax in (bx + box_w, bx + box_w + 3.0):
                 p.drawArc(QRectF(ax, r.height() / 2.0 - 5.5, 5.0, 11.0), -55 * 16, 110 * 16 - 1)
+
+        if self._kind == "mic" and not self._has_device:
+            # Zoom-style amber "!" badge: no input hardware on this system
+            pen = QPen(QColor(255, 193, 7), 2.0)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.right() - 9.5, r.top() + 5.0), QPointF(r.right() - 9.5, r.top() + 11.0))
+            p.drawPoint(QPointF(r.right() - 9.5, r.top() + 13.5))
 
         if not self._on:
             # Zoom-style red slash over the glyph
@@ -346,6 +370,8 @@ class OverlayWindow(QMainWindow):
             "System audio capture",
         )
         self._sys_toggle.toggled.connect(self._on_quick_capture_toggle)
+        # main.py probes audio hardware and calls set_microphone_available().
+        self._has_microphone: Optional[bool] = None
 
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
@@ -427,6 +453,11 @@ class OverlayWindow(QMainWindow):
         self._settings["capture_mic"] = self._mic_toggle.is_on()
         self._settings["capture_system"] = self._sys_toggle.is_on()
         self.settings_changed.emit(dict(self._settings))
+
+    def set_microphone_available(self, available: bool) -> None:
+        """Show an amber "!" on the mic icon when the system has no input device."""
+        self._has_microphone = bool(available)
+        self._mic_toggle.set_has_device(bool(available))
 
     def push_subtitle_line(self, line: str) -> None:
         self._subtitle_bar.append_line(line)
