@@ -56,7 +56,8 @@ class TestAskRowUI:
         assert isinstance(overlay._ask_input, QLineEdit)
         assert overlay._ask_btn.isEnabled()
 
-    def test_enter_sends_and_keeps_text(self, overlay, monkeypatch):
+    def test_enter_sends_and_clears_box(self, overlay, monkeypatch):
+        """Accepted send: input empties so the next question can be typed."""
         sent: list = []
 
         def fake_start_ai(self, content, context_type):
@@ -66,9 +67,21 @@ class TestAskRowUI:
         QTest.keyClicks(overlay._ask_input, "What is the capital of France?")
         QTest.keyClick(overlay._ask_input, Qt.Key.Key_Return)
         assert sent == [("What is the capital of France?", "manual")]
-        assert overlay._ask_input.text() == "What is the capital of France?", (
-            "input text kept for editing"
-        )
+        assert overlay._ask_input.text() == "", "box must be empty after sending"
+
+    def test_send_rejected_keeps_text(self, overlay):
+        """Busy (another answer streaming): typed text must not be lost."""
+
+        from PyQt6.QtCore import QObject
+
+        class _BusyWorker(QObject):
+            def isRunning(self) -> bool:
+                return True
+
+        overlay._ai_worker = _BusyWorker()  # type: ignore[assignment]
+        QTest.keyClicks(overlay._ask_input, "second question")
+        QTest.keyClick(overlay._ask_input, Qt.Key.Key_Return)
+        assert overlay._ask_input.text() == "second question", "text kept when rejected"
 
     def test_empty_input_does_nothing(self, overlay, monkeypatch):
         sent: list = []

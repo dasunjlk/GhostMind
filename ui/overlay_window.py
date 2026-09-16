@@ -240,7 +240,8 @@ def _is_worker_active(worker: Optional[QThread]) -> bool:
         if sip.isdeleted(worker):
             return False
         return bool(worker.isRunning())
-    except (RuntimeError, ReferenceError):
+    except (RuntimeError, ReferenceError, TypeError):
+        # TypeError: a non-sip object was passed (defensive; should not happen)
         return False
 
 
@@ -522,7 +523,11 @@ class OverlayWindow(QMainWindow):
         text = self._ask_input.text().strip()
         if not text:
             return
-        # Text is kept so the user can edit-and-reask (per F-01).
+        if _is_worker_active(self._ai_worker):
+            # Send rejected: keep the typed text so nothing is lost.
+            self._answer_panel.end_stream_error("Already processing another answer.")
+            return
+        self._ask_input.clear()  # accepted: free the box for the next question
         self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:
