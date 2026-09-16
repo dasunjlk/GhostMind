@@ -184,7 +184,9 @@ def parse_and_render(text: str) -> str:
         flush_code()
 
     body = "\n".join(out)
+    # No hardcoded font-size on <body>: the widget's own font (user preference,
+    # see Preferences tab) cascades into the HTML content.
     return (
         f'<html><head><meta charset="utf-8"/></head>'
-        f'<body style="font-family:\'Segoe UI\',sans-serif;font-size:13px;">{body}</body></html>'
+        f'<body style="font-family:\'Segoe UI\',sans-serif;">{body}</body></html>'
     )

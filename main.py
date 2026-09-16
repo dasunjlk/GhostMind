@@ -600,6 +600,38 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("GhostMind")
 
+    # Default UI font: prefer the branded faces when installed, else Segoe UI.
+    # (Individual widgets may still set their own; this is the app-wide base.)
+    _fam = {f.lower() for f in QFontDatabase.families()}
+    _preferred = next((f for f in ("Inter", "DM Sans", "JetBrains Mono", "Segoe UI")
+                       if f.lower() in _fam), None)
+    if _preferred:
+        app.setFont(QFont(_preferred, 10))
+
+    # App-wide dark-theme polish: consistent tooltips, menus, inputs, scrollbars.
+    app.setStyleSheet(
+        ""
+        "QToolTip { color:#E0E0E0; background:#1A1A1A; border:1px solid #00FF88; padding:4px; }"
+        "QMenu { background:#141414; color:#E0E0E0; border:1px solid #333; }"
+        "QMenu::item:selected { background:#162B1E; color:#00FF88; }"
+        "QComboBox { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:3px 8px; }"
+        "QComboBox QAbstractItemView { background:#141414; color:#E0E0E0;"
+        "  selection-background-color:#162B1E; selection-color:#00FF88; }"
+        "QSpinBox { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:2px 6px; }"
+        "QLineEdit { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:3px 6px; }"
+        "QPushButton { font-size:12px; }"
+        "QScrollBar:vertical { background:#111; width:8px; border:none; }"
+        "QScrollBar::handle:vertical { background:#2A5A40; border-radius:4px; min-height:24px; }"
+        "QScrollBar::handle:vertical:hover { background:#00FF88; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        "QScrollBar:horizontal { background:#111; height:8px; border:none; }"
+        "QScrollBar::handle:horizontal { background:#2A5A40; border-radius:4px; min-width:24px; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }"
+    )
+
     # Startup dependency check
     warnings = check_dependencies()
     if warnings:

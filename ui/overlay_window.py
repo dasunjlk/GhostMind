@@ -460,6 +460,7 @@ class OverlayWindow(QMainWindow):
         self._auto_timer.timeout.connect(self._trigger_scan)
 
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
 
         self._header_drag = _HeaderDragFilter(self)
         header.installEventFilter(self._header_drag)
@@ -474,7 +475,22 @@ class OverlayWindow(QMainWindow):
         self._settings_panel.apply_data(self._settings)
         self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
         self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
         self._reapply_stealth()
+
+    def apply_font_size(self, pt: int) -> None:
+        """Apply the user's font size preference across the app (Preferences)."""
+        pt = max(9, min(24, int(pt)))
+        f = self.font()
+        f.setPointSize(pt)
+        self.setFont(f)  # cascades to headers, tabs, buttons, settings panel
+        self._answer_panel.apply_font_size(pt)
+        self._subtitle_bar.apply_font_size(pt)
+        self._ask_input.setStyleSheet(
+            f"QLineEdit {{ background:#141414; color:#E0E0E0; border:1px solid #333;"
+            f" border-radius:4px; padding:4px 8px; font-size:{pt}px; }}"
+            f"QLineEdit:focus {{ border-color:#00FF88; }}"
+        )
 
     def _on_quick_capture_toggle(self, _on: bool) -> None:
         """Header mic/speaker icons changed: persist + restart audio capture."""

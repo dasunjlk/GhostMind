@@ -66,6 +66,10 @@ GhostMind checks for missing dependencies on startup and shows a warning dialog 
 
 The ⚡ **Scan** button in the overlay's header bar triggers the same action as the screen-scan hotkey — use whichever is convenient. All hotkeys remain fully functional:
 
+### Preferences
+
+Under **Settings → Preferences** you can set the app's **font size** (9–24 pt) — it applies to answers, subtitles, the question input, and the general UI, including already-rendered answers. More appearance options will land here in future updates.
+
 ### Audio capture quick toggles
 
 Next to the Scan button, two small icons let you enable/disable audio sources without opening Settings — click to toggle:

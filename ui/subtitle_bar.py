@@ -64,6 +64,13 @@ class SubtitleBar(QWidget):
         lay.addLayout(header)
         lay.addWidget(self._view)
 
+    def apply_font_size(self, pt: int) -> None:
+        """Resize subtitle text (Preferences tab)."""
+        self._view.setStyleSheet(
+            f"QTextEdit {{ background: #0D0D0D; color: #E0E0E0; border: 1px solid #1E1E1E; "
+            f"border-radius: 6px; font-size: {int(pt)}px; }}"
+        )
+
     def append_line(self, line: str) -> None:
         line = line.strip()
         if not line:

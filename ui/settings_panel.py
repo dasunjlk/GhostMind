@@ -230,11 +230,29 @@ class SettingsPanel(QWidget):
         about_lay.addWidget(link_btn)
         about_lay.addStretch(1)
 
+        # 6. Preferences Tab (appearance & future personalization options)
+        tab_prefs = QWidget()
+        form_prefs = QFormLayout(tab_prefs)
+        form_prefs.setContentsMargins(10, 12, 10, 12)
+        form_prefs.setSpacing(8)
+
+        self._font_size = QSpinBox()
+        self._font_size.setRange(9, 24)
+        self._font_size.setSuffix(" pt")
+        self._font_size.setValue(int(self._data.get("font_size", 13)))
+        self._font_size.setToolTip("Base text size for answers, subtitles, and input (9-24)")
+        form_prefs.addRow("Font size:", self._font_size)
+
+        prefs_hint = QLabel("More appearance options coming in future updates.")
+        prefs_hint.setStyleSheet("color:#666;font-size:11px;")
+        form_prefs.addRow(prefs_hint)
+
         # Assemble Tabs
         self._tabs.addTab(tab_general, "General")
         self._tabs.addTab(tab_audio, "Audio")
         self._tabs.addTab(tab_keys, "Shortcuts")
         self._tabs.addTab(tab_api, "API")
+        self._tabs.addTab(tab_prefs, "Preferences")
         self._tabs.addTab(tab_about, "About")
 
         # Bottom Buttons
@@ -357,6 +375,9 @@ class SettingsPanel(QWidget):
                 
         self._whisper.setCurrentText(str(self._data.get("whisper_model", "base")))
 
+        # Preferences
+        self._font_size.setValue(int(self._data.get("font_size", 13)))
+
         # AI Model (persisted custom IDs may not exist yet in a fresh combo)
         self._custom_models = list(self._data.get("custom_models") or [])
         self._populate_model_combo()
@@ -416,6 +437,7 @@ class SettingsPanel(QWidget):
             "capture_system": self._cap_sys.currentText() == "yes",
             "loopback_device": loopback_id,
             "whisper_model": self._whisper.currentText(),
+            "font_size": int(self._font_size.value()),
             "ai_model": self._ai_model.currentData() or DEFAULT_MODEL,
             "custom_models": list(self._custom_models),
             "hotkeys": {
