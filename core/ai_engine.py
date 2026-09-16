@@ -126,6 +126,9 @@ def _meeting_question_system_block() -> str:
 
 
 def build_system_prompt(context_type: str, content: str) -> str:
+    if context_type == "manual":
+        # Typed question (F-01): plain system prompt, no screen/meeting framing.
+        return BASE_SYSTEM
     if context_type == "meeting_audio":
         return _meeting_system_block()
     if context_type == "meeting_question":
@@ -137,6 +140,8 @@ def build_system_prompt(context_type: str, content: str) -> str:
 
 
 def build_user_message(context_type: str, content: str) -> str:
+    if context_type == "manual":
+        return content
     if context_type in ("meeting_audio", "meeting_summary"):
         return f"Transcript (may be partial):\n\n{content}"
     if context_type == "meeting_question":

@@ -139,6 +139,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "toggle_subtitles": "ctrl+shift+t",
         "export_transcript": "ctrl+shift+e",
         "toggle_click_through": "ctrl+shift+x",
+        "ask_question": "ctrl+shift+q",
     },
 }
 
@@ -299,6 +300,7 @@ class GhostMindController(QObject):
         self.hotkeys.export_transcript.connect(self.export_transcript)
         self.overlay.export_requested.connect(self.export_transcript)
         self.hotkeys.toggle_click_through.connect(self._toggle_click_through)
+        self.hotkeys.ask_question.connect(self.overlay.focus_question_input)
 
         self._register_hotkeys()
         self._start_audio_if_needed()
@@ -312,6 +314,7 @@ class GhostMindController(QObject):
             str(hk.get("toggle_subtitles", "ctrl+shift+t")),
             str(hk.get("export_transcript", "ctrl+shift+e")),
             str(hk.get("toggle_click_through", "ctrl+shift+x")),
+            str(hk.get("ask_question", "ctrl+shift+q")),
         )
 
     def _on_settings_changed(self, data: Dict[str, Any]) -> None:

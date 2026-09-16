@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -416,6 +417,32 @@ class OverlayWindow(QMainWindow):
         self._tabs.addTab(sub_host, "Subtitles")
         mp_lay.addWidget(self._tabs, 1)
 
+        # --- Manual question input (F-01) ---
+        self._ask_row = QWidget()
+        ask_lay = QHBoxLayout(self._ask_row)
+        ask_lay.setContentsMargins(6, 0, 6, 6)
+        ask_lay.setSpacing(6)
+        self._ask_input = QLineEdit()
+        self._ask_input.setPlaceholderText("Ask anything… (Enter to send, Shift+Enter for new line)")
+        self._ask_input.setStyleSheet(
+            "QLineEdit { background:#141414; color:#E0E0E0; border:1px solid #333;"
+            " border-radius:4px; padding:4px 8px; font-size:12px; }"
+            "QLineEdit:focus { border-color:#00FF88; }"
+        )
+        self._ask_input.returnPressed.connect(self._send_manual_question)
+        self._ask_btn = QPushButton("Ask")
+        self._ask_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ask_btn.setStyleSheet(
+            "QPushButton { background:#162B1E; color:#00FF88; border:1px solid #00FF88;"
+            " padding:4px 12px; border-radius:4px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#1E3E2B; }"
+            "QPushButton:disabled { color:#556; border-color:#556; }"
+        )
+        self._ask_btn.clicked.connect(self._send_manual_question)
+        ask_lay.addWidget(self._ask_input, 1)
+        ask_lay.addWidget(self._ask_btn)
+        mp_lay.addWidget(self._ask_row)
+
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
@@ -478,6 +505,25 @@ class OverlayWindow(QMainWindow):
             return
         self._tabs.setCurrentIndex(0)
         self._start_ai(content.strip(), context_type)
+
+    def focus_question_input(self) -> None:
+        """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
+        if self._stack.currentIndex() == 1:
+            self._stack.setCurrentIndex(0)
+            self._settings_panel.hide()
+        self._tabs.setCurrentIndex(0)
+        if not self.isVisible():
+            self.toggle_visibility_animated()
+        self.raise_()
+        self._ask_input.setFocus()
+
+    def _send_manual_question(self) -> None:
+        """Ask button / Enter in the manual question box (F-01)."""
+        text = self._ask_input.text().strip()
+        if not text:
+            return
+        # Text is kept so the user can edit-and-reask (per F-01).
+        self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:
         if _is_worker_active(self._scan_worker):

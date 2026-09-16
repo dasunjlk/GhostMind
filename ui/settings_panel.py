@@ -140,6 +140,7 @@ class SettingsPanel(QWidget):
         self._hk_sub = QLineEdit()
         self._hk_export = QLineEdit()
         self._hk_click = QLineEdit()
+        self._hk_ask = QLineEdit()
 
         form_keys.addRow("Toggle Visibility:", self._hk_vis)
         form_keys.addRow("Screen Scan (OCR):", self._hk_scan)
@@ -147,6 +148,7 @@ class SettingsPanel(QWidget):
         form_keys.addRow("Toggle Subtitles:", self._hk_sub)
         form_keys.addRow("Export Transcript:", self._hk_export)
         form_keys.addRow("Toggle Click-Through:", self._hk_click)
+        form_keys.addRow("Focus Question Box:", self._hk_ask)
 
         # 4. API Tab
         tab_api = QWidget()
@@ -376,6 +378,7 @@ class SettingsPanel(QWidget):
         self._hk_sub.setText(str(hk.get("toggle_subtitles", "ctrl+shift+t")))
         self._hk_export.setText(str(hk.get("export_transcript", "ctrl+shift+e")))
         self._hk_click.setText(str(hk.get("toggle_click_through", "ctrl+shift+x")))
+        self._hk_ask.setText(str(hk.get("ask_question", "ctrl+shift+q")))
 
         # API key status (never render the key itself)
         stored = ""
@@ -422,6 +425,7 @@ class SettingsPanel(QWidget):
                 "toggle_subtitles": self._hk_sub.text().strip(),
                 "export_transcript": self._hk_export.text().strip(),
                 "toggle_click_through": self._hk_click.text().strip(),
+                "ask_question": self._hk_ask.text().strip(),
             },
         }
 

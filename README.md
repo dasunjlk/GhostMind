@@ -83,6 +83,7 @@ Enable either one alone, both together, or neither. Changes take effect immediat
 | Switch Answers ↔ Subtitles tab | `Ctrl+Shift+T` |
 | Export transcript | `Ctrl+Shift+E` |
 | Toggle click-through mode | `Ctrl+Shift+X` |
+| Focus the question input box | `Ctrl+Shift+Q` |
 
 ### Keyboard Navigation
 
