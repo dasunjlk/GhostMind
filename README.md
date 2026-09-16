@@ -66,6 +66,15 @@ GhostMind checks for missing dependencies on startup and shows a warning dialog 
 
 The ⚡ **Scan** button in the overlay's header bar triggers the same action as the screen-scan hotkey — use whichever is convenient. All hotkeys remain fully functional:
 
+### Audio capture quick toggles
+
+Next to the Scan button, two small icons let you enable/disable audio sources without opening Settings — click to toggle:
+
+- 🎙 **Microphone capture** — shows a red slash when off (Zoom-style)
+- 🔊 **System audio capture** — same slash treatment
+
+Enable either one alone, both together, or neither. Changes take effect immediately (same as saving on the Audio tab); the icons stay in sync with the Audio tab checkboxes.
+
 | Action | Default hotkey |
 |--------|----------------|
 | Toggle overlay visibility | `Ctrl+Shift+G` |
@@ -85,7 +94,7 @@ The ⚡ **Scan** button in the overlay's header bar triggers the same action as 
 
 ### Tabs
 
-- **Answers** tab: shows streamed Llama output with copy per block.
+- **Answers** tab: shows streamed AI answers with copy per block.
 - **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` or question keywords schedule a short debounce, then the recent transcript is sent to Llama as **meeting** context.
 
 ### System Tray

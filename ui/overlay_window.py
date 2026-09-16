@@ -12,14 +12,28 @@ from PyQt6.QtCore import (
     QEasingCurve,
     QObject,
     QPoint,
+    QPointF,
     QRect,
+    QRectF,
     Qt,
     QTimer,
     QVariantAnimation,
     QEvent,
     pyqtSignal,
 )
-from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QKeyEvent, QMouseEvent
+from PyQt6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -97,6 +111,99 @@ class _RoundCtl(QPushButton):
             f"QPushButton {{ background:{color}; border-radius:6px; border:none; }}"
             f"QPushButton:hover {{ background:{hover}; }}"
         )
+
+
+class _CaptureIconWidget(QWidget):
+    """Zoom-style capture toggle: drawn mic/speaker glyph, red slash when off.
+
+    Click toggles; the app state lives in the capture settings that callers sync.
+    """
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(self, kind: str, enabled: bool, tooltip_base: str, parent=None) -> None:
+        super().__init__(parent)
+        self._kind = kind
+        self._on = bool(enabled)
+        self._tooltip_base = tooltip_base
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self._tooltip_text())
+
+    def is_on(self) -> bool:
+        return self._on
+
+    def set_on(self, on: bool) -> None:
+        if self._on != bool(on):
+            self._on = bool(on)
+            self.update()
+            self.setToolTip(self._tooltip_text())
+
+    def _tooltip_text(self) -> str:
+        return f"{self._tooltip_base} — {'on' if self._on else 'off'} (click to toggle)"
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802 (Qt naming)
+        self._on = not self._on
+        self.update()
+        self.setToolTip(self._tooltip_text())
+        self.toggled.emit(self._on)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+        if self.underMouse():
+            p.fillRect(r, QColor(34, 34, 34))
+
+        color = QColor("#00FF88") if self._on else QColor("#888888")
+        cx = r.center().x()
+        right_edge = r.right()
+        bottom_edge = r.bottom()
+
+        if self._kind == "mic":
+            # Capsule + arc + stand, from a 7x13 cell centered in the widget
+            w, h = 7.0, 13.0
+            x = cx - w / 2.0
+            y = (r.height() - h) / 2.0 - 1.5
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(x, y, w, h), 3.5, 3.5)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.6)
+            p.setPen(pen)
+            p.drawArc(QRectF(x - 3.5, y + 2.0, w + 7.0, h + 2.0), -60 * 16, 120 * 16 - 1)
+            p.drawLine(QPointF(cx, y + h + 0.5), QPointF(cx, bottom_edge - 3.0))
+            p.drawLine(QPointF(cx - 3.0, bottom_edge - 3.0), QPointF(cx + 3.0, bottom_edge - 3.0))
+        else:  # "speaker"
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            box_w, box_h = 6.0, 8.0
+            bx = cx - 6.5 - box_w / 2.0
+            by = (r.height() - box_h) / 2.0
+            p.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(bx, by),
+                        QPointF(bx + box_w, by - 1.5),
+                        QPointF(bx + box_w, by + box_h + 1.5),
+                        QPointF(bx, by + box_h),
+                    ]
+                )
+            )
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.7)
+            p.setPen(pen)
+            for ax in (bx + box_w, bx + box_w + 3.0):
+                p.drawArc(QRectF(ax, r.height() / 2.0 - 5.5, 5.0, 11.0), -55 * 16, 110 * 16 - 1)
+
+        if not self._on:
+            # Zoom-style red slash over the glyph
+            pen = QPen(QColor(255, 68, 68), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.left() + 4, r.top() + 4), QPointF(right_edge - 4, bottom_edge - 4))
 
 
 def _is_worker_active(worker: Optional[QThread]) -> bool:
@@ -227,6 +334,19 @@ class OverlayWindow(QMainWindow):
         )
         btn_set.clicked.connect(self._toggle_settings)
 
+        # Quick capture toggles (Zoom-style): click to enable/disable mic / system
+        # audio. Kept in sync with the Audio tab via settings_changed/apply_settings.
+        self._mic_toggle = _CaptureIconWidget(
+            "mic", bool(self._settings.get("capture_mic", True)), "Microphone capture"
+        )
+        self._mic_toggle.toggled.connect(self._on_quick_capture_toggle)
+        self._sys_toggle = _CaptureIconWidget(
+            "speaker",
+            bool(self._settings.get("capture_system", True)),
+            "System audio capture",
+        )
+        self._sys_toggle.toggled.connect(self._on_quick_capture_toggle)
+
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
         hl.addSpacing(8)
@@ -234,6 +354,10 @@ class OverlayWindow(QMainWindow):
         hl.addStretch(1)
         hl.addWidget(btn_scan)
         hl.addSpacing(6)
+        hl.addWidget(self._mic_toggle)
+        hl.addSpacing(2)
+        hl.addWidget(self._sys_toggle)
+        hl.addSpacing(4)
         hl.addWidget(btn_set)
 
         root.addWidget(header)
@@ -294,7 +418,15 @@ class OverlayWindow(QMainWindow):
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
         self._apply_auto_timer_state()
         self._settings_panel.apply_data(self._settings)
+        self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
+        self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
         self._reapply_stealth()
+
+    def _on_quick_capture_toggle(self, _on: bool) -> None:
+        """Header mic/speaker icons changed: persist + restart audio capture."""
+        self._settings["capture_mic"] = self._mic_toggle.is_on()
+        self._settings["capture_system"] = self._sys_toggle.is_on()
+        self.settings_changed.emit(dict(self._settings))
 
     def push_subtitle_line(self, line: str) -> None:
         self._subtitle_bar.append_line(line)
