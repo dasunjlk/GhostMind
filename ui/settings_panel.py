@@ -1,5 +1,5 @@
 """
-In-overlay tabbed settings: General, Audio, Shortcuts, AI & API, and About.
+In-overlay tabbed settings: General, Audio, Shortcuts, API, and About.
 """
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ class SettingsPanel(QWidget):
         form_keys.addRow("Export Transcript:", self._hk_export)
         form_keys.addRow("Toggle Click-Through:", self._hk_click)
 
-        # 4. AI & API Tab
+        # 4. API Tab
         tab_api = QWidget()
         form_api = QFormLayout(tab_api)
         form_api.setContentsMargins(10, 12, 10, 12)
@@ -232,7 +232,7 @@ class SettingsPanel(QWidget):
         self._tabs.addTab(tab_general, "General")
         self._tabs.addTab(tab_audio, "Audio")
         self._tabs.addTab(tab_keys, "Shortcuts")
-        self._tabs.addTab(tab_api, "AI & API")
+        self._tabs.addTab(tab_api, "API")
         self._tabs.addTab(tab_about, "About")
 
         # Bottom Buttons

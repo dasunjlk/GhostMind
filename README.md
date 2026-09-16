@@ -30,7 +30,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
   Install example (Chocolatey): `choco install tesseract`  
   Or download from: https://github.com/UB-Mannheim/tesseract/wiki
 
-- **Groq API key** — free tier available at [console.groq.com](https://console.groq.com). Paste it in the app under **Settings → AI & API** (stored securely in Windows Credential Manager), or set `GROQ_API_KEY` in `.env` as a fallback.
+- **Groq API key** — free tier available at [console.groq.com](https://console.groq.com). Paste it in the app under **Settings → API** (stored securely in Windows Credential Manager), or set `GROQ_API_KEY` in `.env` as a fallback.
 
 ### Optional: faster GPU for Whisper
 
@@ -46,7 +46,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Then launch the app and paste your Groq key under **Settings → AI & API → Save** — it persists across restarts (Windows Credential Manager, with a `config/settings.toml` plaintext fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
+Then launch the app and paste your Groq key under **Settings → API → Save** — it persists across restarts (Windows Credential Manager, with a `config/settings.toml` plaintext fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
 
 ### Fonts (optional)
 
@@ -153,7 +153,7 @@ QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases U
   Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
 
 - **Invalid / missing API key**  
-  Paste your key in **Settings → AI & API** and hit **Save** — the app checks the key and model immediately and shows the problem inline. Keys are stored in Windows Credential Manager. Free keys at the [Groq console](https://console.groq.com). The default model is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`; use **＋ Add custom model…** for any other Groq model ID.
+  Paste your key in **Settings → API** and hit **Save** — the app checks the key and model immediately and shows the problem inline. Keys are stored in Windows Credential Manager. Free keys at the [Groq console](https://console.groq.com). The default model is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`; use **＋ Add custom model…** for any other Groq model ID.
 
 
 - **No microphone or loopback device**  

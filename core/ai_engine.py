@@ -162,7 +162,7 @@ def resolve_api_key(explicit: Optional[str] = None) -> str:
 
 
 _NO_KEY_MSG = (
-    "No API key found. Open Settings -> AI & API, paste your free key "
+    "No API key found. Open Settings -> API, paste your free key "
     "from https://console.groq.com, then Save."
 )
 
