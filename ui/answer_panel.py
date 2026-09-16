@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -66,6 +66,9 @@ class _AnswerBlock(QWidget):
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Wrap, never scroll horizontally: long lines must stay inside the overlay.
+        self._text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._text.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self._text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self._text.document().setDocumentMargin(8)
         self._text.setStyleSheet(

@@ -46,7 +46,8 @@ def parse_and_render(text: str) -> str:
         label = f'<span style="color:#00FF88;font-size:10px;">{lang}</span><br/>' if lang else ""
         out.append(
             f'<pre style="background:#0A0A0A;border:1px solid #00FF88;border-radius:4px;'
-            f'padding:8px;margin:6px 0;color:#00FF88;font-family:Consolas,monospace;">'
+            f'padding:8px;margin:6px 0;color:#00FF88;font-family:Consolas,monospace;'
+            f'white-space:pre-wrap;word-wrap:break-word;overflow-wrap:anywhere;">'
             f"{label}{body}</pre>"
         )
         code_lines = []

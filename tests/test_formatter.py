@@ -185,3 +185,18 @@ class TestBlockquotesAndAnswers:
         assert "border:1px solid #00FF88" in result
         assert "[B] O(log n)" in result
 
+
+
+class TestCodeBlockWrapping:
+    """Long code lines must wrap instead of forcing horizontal overflow."""
+
+    def test_code_block_has_pre_wrap(self):
+        result = parse_and_render("```python\nprint('x')\n```")
+        assert "white-space:pre-wrap" in result
+        assert "word-wrap:break-word" in result
+
+    def test_long_code_line_stays_in_pre(self):
+        long_line = "x = '" + "A" * 300 + "'"
+        result = parse_and_render(f"```\n{long_line}\n```")
+        assert "<pre" in result
+        assert long_line in result, "content preserved for wrapping, not clipped"
