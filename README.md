@@ -62,7 +62,9 @@ GhostMind checks for missing dependencies on startup and shows a warning dialog 
 
 ## Usage
 
-### Hotkeys
+### Scan button & hotkeys
+
+The ⚡ **Scan** button in the overlay's header bar triggers the same action as the screen-scan hotkey — use whichever is convenient. All hotkeys remain fully functional:
 
 | Action | Default hotkey |
 |--------|----------------|

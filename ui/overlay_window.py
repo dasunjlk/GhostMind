@@ -201,6 +201,21 @@ class OverlayWindow(QMainWindow):
         btn_min.clicked.connect(self._minimize_hide)
 
 
+        # Scan button: same action as the screen-scan hotkey (Ctrl+Shift+S)
+        btn_scan = QPushButton("⚡ Scan")
+        btn_scan.setObjectName("scanBtn")
+        btn_scan.setToolTip("Scan screen & answer (Ctrl+Shift+S)")
+        btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_scan.setStyleSheet(
+            "#scanBtn { background: transparent; color: #00FF88; border: 1px solid #00FF88;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: bold; }"
+            "#scanBtn:hover { background: rgba(0, 255, 136, 0.15); }"
+            "#scanBtn:pressed { background: rgba(0, 255, 136, 0.30); }"
+            "#scanBtn:disabled { color: #556; border-color: #556; }"
+        )
+        btn_scan.clicked.connect(self.trigger_screen_scan)
+        self._btn_scan = btn_scan
+
         # Settings Gear Icon Button
         btn_set = QPushButton("⚙")
         btn_set.setToolTip("Settings")
@@ -217,6 +232,8 @@ class OverlayWindow(QMainWindow):
         hl.addSpacing(8)
         hl.addWidget(title)
         hl.addStretch(1)
+        hl.addWidget(btn_scan)
+        hl.addSpacing(6)
         hl.addWidget(btn_set)
 
         root.addWidget(header)
@@ -305,12 +322,14 @@ class OverlayWindow(QMainWindow):
         mid = int(self._settings.get("monitor_id", 1))
         self._tabs.setCurrentIndex(0)
         self._answer_panel.start_thinking()
+        self._btn_scan.setEnabled(False)
         worker = ScreenScanWorker(mid)
         self._scan_worker = worker
 
         def _cleanup_scan() -> None:
             if self._scan_worker is worker:
                 self._scan_worker = None
+            self._btn_scan.setEnabled(True)
 
         worker.finished.connect(_cleanup_scan)
         worker.finished.connect(worker.deleteLater)
