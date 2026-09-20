@@ -38,7 +38,7 @@ class TestHasMicrophone:
         assert has_microphone() is True
 
     def test_false_when_no_input_devices(self, monkeypatch):
-        monkeypatch.setattr(audio_listener, "get_input_devices", lambda: [])
+        monkeypatch.setattr(audio_listener, "get_input_devices", list)
         assert has_microphone() is False
 
     def test_false_when_detection_raises(self, monkeypatch):

@@ -60,6 +60,14 @@ python main.py
 
 GhostMind checks for missing dependencies on startup and shows a warning dialog if anything is unavailable. The app still starts — just with reduced functionality.
 
+### Lint & tests (development)
+
+```text
+pip install -r requirements-dev.txt
+ruff check .
+pytest -q
+```
+
 ## Usage
 
 ### Scan button & hotkeys

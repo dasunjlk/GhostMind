@@ -1,8 +1,6 @@
 """Tests for utils/formatter.py — markdown-like text to HTML rendering."""
 from __future__ import annotations
 
-import pytest
-
 from utils.formatter import parse_and_render
 
 

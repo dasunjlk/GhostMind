@@ -10,15 +10,16 @@ from typing import Any, Dict, Optional
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
+    QEvent,
     QObject,
     QPoint,
     QPointF,
     QRect,
     QRectF,
     Qt,
+    QThread,
     QTimer,
     QVariantAnimation,
-    QEvent,
     pyqtSignal,
 )
 from PyQt6.QtGui import (
@@ -31,7 +32,6 @@ from PyQt6.QtGui import (
     QMouseEvent,
     QPainter,
     QPen,
-    QPixmap,
     QPolygonF,
 )
 from PyQt6.QtWidgets import (
@@ -47,10 +47,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import AiStreamWorker, DEFAULT_MODEL
+from core.ai_engine import DEFAULT_MODEL, AiStreamWorker
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
-
 from ui.answer_panel import AnswerPanel
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
@@ -160,13 +159,13 @@ class _CaptureIconWidget(QWidget):
             return f"{self._tooltip_base} — no microphone detected on this system"
         return f"{self._tooltip_base} — {'on' if self._on else 'off'} (click to toggle)"
 
-    def mousePressEvent(self, a0) -> None:  # noqa: N802 (Qt naming)
+    def mousePressEvent(self, a0) -> None:
         self._on = not self._on
         self.update()
         self.setToolTip(self._tooltip_text())
         self.toggled.emit(self._on)
 
-    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+    def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = self.rect()

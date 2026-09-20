@@ -318,7 +318,7 @@ class AudioListener(QThread):
             return
         try:
             audio = np.clip(audio.astype(np.float32), -1.0, 1.0)
-            segments, info = model.transcribe(
+            segments, _info = model.transcribe(
                 audio,
                 beam_size=1,
                 vad_filter=True,

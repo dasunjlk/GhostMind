@@ -5,9 +5,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
-
-from utils import key_store
+from typing import Any, Callable, Dict, List
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -15,7 +13,6 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFormLayout,
-    QFrame,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -32,8 +29,15 @@ from PyQt6.QtWidgets import (
 from core.ai_engine import ADD_CUSTOM_MODEL_SENTINEL, AVAILABLE_MODELS, DEFAULT_MODEL
 from core.audio_listener import get_input_devices
 from core.screen_reader import get_monitors
-from version import __app_name__, __author__, __copyright__, __description__, __github__, __version__
-
+from utils import key_store
+from version import (
+    __app_name__,
+    __author__,
+    __copyright__,
+    __description__,
+    __github__,
+    __version__,
+)
 
 
 class _ApiTestSignals(QObject):
@@ -91,12 +95,12 @@ class SettingsPanel(QWidget):
         form_gen.addRow("Monitor:", self._monitor)
         form_gen.addRow("Scan Mode:", self._scan_mode)
         form_gen.addRow("Auto Interval:", self._scan_interval)
-        
+
         op_row = QHBoxLayout()
         op_row.addWidget(self._opacity, 1)
         op_row.addWidget(self._opacity_label)
         form_gen.addRow("Opacity:", op_row)
-        
+
         form_gen.addRow("Click-Through:", self._click_through)
         form_gen.addRow("Subtitles on Startup:", self._subtitles_startup)
 
@@ -202,7 +206,7 @@ class SettingsPanel(QWidget):
 
         app_title = QLabel(f"{__app_name__} v{__version__}")
         app_title.setStyleSheet("color:#00FF88;font-size:16px;font-weight:bold;")
-        
+
         app_desc = QLabel(__description__)
         app_desc.setStyleSheet("color:#AAAAAA;font-size:12px;")
 
@@ -335,22 +339,22 @@ class SettingsPanel(QWidget):
 
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)
-        
+
         # Monitor
         mid = int(self._data.get("monitor_id", 1))
         for i in range(self._monitor.count()):
             if int(self._monitor.itemData(i) or -1) == mid:
                 self._monitor.setCurrentIndex(i)
                 break
-                
+
         # Scan mode & interval
         mode = str(self._data.get("scan_mode", "manual"))
         self._scan_mode.setCurrentText(mode)
         self._scan_interval.setValue(int(self._data.get("auto_scan_interval_sec", 30)))
-        
+
         # Opacity
         op = float(self._data.get("opacity", 0.92))
-        val_int = int(round(op * 100))
+        val_int = round(op * 100)
         self._opacity.setValue(max(20, min(100, val_int)))
         self._opacity_label.setText(f"{val_int}%")
 
@@ -365,14 +369,14 @@ class SettingsPanel(QWidget):
             self._session_type.setCurrentIndex(idx)
         self._cap_mic.setCurrentText("yes" if self._data.get("capture_mic", True) else "no")
         self._cap_sys.setCurrentText("yes" if self._data.get("capture_system", True) else "no")
-        
+
         # Loopback device
         lb_dev = self._data.get("loopback_device")
         for i in range(self._loopback_device.count()):
             if self._loopback_device.itemData(i) == lb_dev:
                 self._loopback_device.setCurrentIndex(i)
                 break
-                
+
         self._whisper.setCurrentText(str(self._data.get("whisper_model", "base")))
 
         # Preferences

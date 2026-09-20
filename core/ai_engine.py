@@ -11,7 +11,7 @@ import time
 from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
-from PyQt6.QtCore import QObject, pyqtSignal, QThread
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
@@ -261,16 +261,16 @@ async def generate_answer(
 
     for model in models_to_try:
         try:
+            # to_thread forwards kwargs, so no closure over the loop var is needed.
             msg = await asyncio.to_thread(
-                lambda: client.chat.completions.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user_msg},
-                    ],
-                )
+                client.chat.completions.create,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0.3,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
             )
             return (msg.choices[0].message.content or "").strip()
         except Exception as e:

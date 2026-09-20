@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
-from PyQt6.QtCore import QObject, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
@@ -20,7 +21,7 @@ class _FakeScanWorker(QObject):
     finished_ok = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    started: list = []
+    started: ClassVar[list] = []
 
     def __init__(self, monitor_id: int) -> None:
         super().__init__()

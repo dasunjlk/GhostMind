@@ -15,9 +15,25 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import toml
 from dotenv import load_dotenv
-from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
+from PyQt6.QtCore import QObject, Qt, QTimer, QUrl
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+)
 
 from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener, has_microphone
@@ -26,7 +42,6 @@ from ui.overlay_window import OverlayWindow
 from utils import updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
-
 
 
 def check_dependencies() -> List[str]:
@@ -104,6 +119,9 @@ def check_dependencies() -> List[str]:
 
     return warnings
 
+# Deep link for the one-click Tesseract install (dependency dialog, R-01).
+TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
+
 REPO_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = REPO_ROOT / "config" / "settings.toml"
 
@@ -112,6 +130,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "scan_mode": "manual",
     "auto_scan_interval_sec": 30,
     "opacity": 0.92,
+    # UI text size (Preferences tab; 9-24 pt)
+    "font_size": 13,
     "click_through": False,
     "dwm_cloak": False,
     "subtitles_enabled": True,
@@ -591,6 +611,29 @@ class GhostMindController(QObject):
                 self._show_update_popup(self._last_update_check, locked=False)
 
 
+def _dependency_dialog(message: str) -> QMessageBox:
+    """Build the dependency warning dialog; caller runs .exec() to show it.
+
+    When Tesseract is the missing piece, offers a one-click "Install Tesseract
+    OCR" button that opens the official download page (release plan R-01).
+    Returned un-exec'd so tests can inspect/click buttons without blocking.
+    """
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("GhostMind — Dependency Warnings")
+    box.setText("GhostMind detected missing dependencies.")
+    box.setInformativeText(message)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    if "Tesseract OCR not found" in message:
+        install_btn = box.addButton(
+            "Install Tesseract OCR", QMessageBox.ButtonRole.ActionRole
+        )
+        install_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(TESSERACT_URL))
+        )
+    return box
+
+
 def main() -> int:
     load_dotenv(REPO_ROOT / ".env")
 
@@ -641,9 +684,7 @@ def main() -> int:
             + "\n\n"
             "The app will start but some features may be unavailable."
         )
-        QTimer.singleShot(200, lambda: QMessageBox.warning(
-            None, "GhostMind — Dependency Warnings", msg
-        ))
+        QTimer.singleShot(200, lambda: _dependency_dialog(msg).exec())
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)

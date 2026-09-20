@@ -6,9 +6,6 @@ file:// URLs against a local fixture release JSON.
 from __future__ import annotations
 
 import hashlib
-import json
-import time
-from types import SimpleNamespace
 from typing import List, Optional
 
 import pytest

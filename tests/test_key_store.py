@@ -1,8 +1,8 @@
 """Tests for utils/key_store.py — API key storage (keyring + plaintext fallback)."""
 from __future__ import annotations
 
-import toml
 import pytest
+import toml
 
 import utils.key_store as key_store
 
