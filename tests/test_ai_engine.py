@@ -1,8 +1,6 @@
 """Tests for core/ai_engine.py — prompt routing and text classification."""
 from __future__ import annotations
 
-import pytest
-
 from core.ai_engine import (
     _classify_screen_text,
     _screen_system_addon,

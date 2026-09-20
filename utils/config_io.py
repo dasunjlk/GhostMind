@@ -8,8 +8,6 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import toml
-
 logger = logging.getLogger(__name__)
 
 

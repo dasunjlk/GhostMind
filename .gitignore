@@ -31,9 +31,12 @@ config/update_state.json
 # OS / IDE
 .DS_Store
 Thumbs.db
-*.spec
 .idea/
 .vscode/
 
+# Ruff linter cache
+.ruff_cache/
+
 # Whisper / model caches (optional local)
 .cache/
+qa_shots/

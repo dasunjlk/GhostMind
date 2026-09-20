@@ -89,14 +89,14 @@ class TestValidateModelMatch:
     def test_empty_catalog_means_no_model_check(self, monkeypatch):
         # Some deployments return no list; never block on that.
         _make_client_factory(monkeypatch, ids=[])
-        ok, msg = validate_key_and_model(api_key="gsk_ok", model_id="anything/here")
+        ok, _msg = validate_key_and_model(api_key="gsk_ok", model_id="anything/here")
         assert ok is True
 
     def test_custom_model_id_accepted_when_listed(self, monkeypatch):
         _make_client_factory(
             monkeypatch, ids=["qwen/qwen3.8-27b", "my-org/my-fine-tune"]
         )
-        ok, msg = validate_key_and_model(api_key="gsk_ok", model_id="my-org/my-fine-tune")
+        ok, _msg = validate_key_and_model(api_key="gsk_ok", model_id="my-org/my-fine-tune")
         assert ok is True
 
     def test_groq_not_installed(self, monkeypatch):

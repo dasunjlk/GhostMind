@@ -98,10 +98,8 @@ def _set_capture_exclusion(hwnd: int, exclude: bool) -> None:
 def _ctypes_get_exstyle(hwnd: int) -> int:
     try:
         get_fn = user32.GetWindowLongPtrW
-        set_fn = user32.SetWindowLongPtrW
     except AttributeError:  # pragma: no cover
         get_fn = user32.GetWindowLongW
-        set_fn = user32.SetWindowLongW
     return int(get_fn(wintypes.HWND(hwnd), GWL_EXSTYLE))
 
 

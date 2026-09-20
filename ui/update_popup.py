@@ -15,9 +15,9 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
-from PyQt6.QtCore import QObject, QUrl, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
     QDialog,
@@ -268,7 +268,7 @@ class UpdatePopup(QDialog):
         if not self._installer_path:
             return
         try:
-            os.startfile(self._installer_path)  # noqa: S606 (verified checksum)
+            os.startfile(self._installer_path)
             updater.record_popup(self._state_path)
             self.done(QDialog.DialogCode.Accepted)
         except Exception as e:

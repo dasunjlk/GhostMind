@@ -71,7 +71,7 @@ def parse_and_render(text: str) -> str:
         inner = " ".join(render_inline(x) for x in buf if x.strip())
         if inner.strip():
             # Check for answer badge formatting
-            if inner.startswith("<b>Answer:</b>") or inner.startswith("<b>ANSWER:</b>"):
+            if inner.startswith(("<b>Answer:</b>", "<b>ANSWER:</b>")):
                 out.append(
                     f'<div style="background:#0F2A1C;border:1px solid #00FF88;border-radius:4px;'
                     f'padding:8px 12px;margin:8px 0;color:#E0FFE0;">{inner}</div>'

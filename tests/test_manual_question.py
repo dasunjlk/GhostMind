@@ -72,6 +72,7 @@ class TestAskRowUI:
     def test_user_message_bubble_shown_for_chat(self, overlay, monkeypatch):
         """Typed messages echo as a user bubble; scan flows do not."""
         from PyQt6.QtCore import pyqtSignal
+
         from ui.answer_panel import AnswerPanel
 
         calls: list = []

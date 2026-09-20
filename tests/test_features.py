@@ -13,8 +13,15 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 
 import version
-from core.audio_listener import resample_to_16k, get_input_devices, find_loopback_device_index
-from core.screen_reader import get_active_window_title, detect_meeting_app, get_screen_context
+from core.audio_listener import (
+    find_loopback_device_index,
+    get_input_devices,
+    resample_to_16k,
+)
+from core.screen_reader import (
+    detect_meeting_app,
+    get_active_window_title,
+)
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
 
@@ -43,7 +50,7 @@ class TestModelConfiguration:
         assert MODEL_ID == "qwen/qwen3.8-27b"
 
     def test_backup_models_available(self):
-        from core.ai_engine import BACKUP_MODELS, AVAILABLE_MODELS
+        from core.ai_engine import AVAILABLE_MODELS, BACKUP_MODELS
         assert "qwen/qwen3.6-27b" in BACKUP_MODELS
         assert "openai/gpt-oss-120b" in BACKUP_MODELS
         assert "openai/gpt-oss-20b" in BACKUP_MODELS
@@ -166,6 +173,7 @@ class TestWorkerSafety:
 
     def test_is_worker_active_deleted(self, qapp):
         from PyQt6.QtCore import QThread
+
         from ui.overlay_window import _is_worker_active
         worker = QThread()
         # Delete underlying C++ object
