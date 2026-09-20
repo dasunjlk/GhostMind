@@ -25,6 +25,9 @@ TODO.md
 # User-specific configuration (generated on first run)
 config/settings.toml
 
+# Update checker state (U-01)
+config/update_state.json
+
 # OS / IDE
 .DS_Store
 Thumbs.db

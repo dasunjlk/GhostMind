@@ -20,6 +20,11 @@ try:
 except ImportError:  # pragma: no cover
     Groq = None  # type: ignore
 
+try:
+    from groq import RateLimitError  # type: ignore
+except ImportError:  # pragma: no cover
+    RateLimitError = None  # type: ignore
+
 # Supported Models
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
 MODEL_ID = DEFAULT_MODEL
@@ -35,6 +40,9 @@ AVAILABLE_MODELS: List[Tuple[str, str]] = [
     ("openai/gpt-oss-120b", "GPT-OSS 120B"),
     ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
 ]
+
+# Sentinel itemData value for the settings dropdown "＋ Add custom model…" entry.
+ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
 
 MAX_TOKENS = 1024
 
@@ -118,6 +126,9 @@ def _meeting_question_system_block() -> str:
 
 
 def build_system_prompt(context_type: str, content: str) -> str:
+    if context_type == "manual":
+        # Typed question (F-01): plain system prompt, no screen/meeting framing.
+        return BASE_SYSTEM
     if context_type == "meeting_audio":
         return _meeting_system_block()
     if context_type == "meeting_question":
@@ -129,6 +140,8 @@ def build_system_prompt(context_type: str, content: str) -> str:
 
 
 def build_user_message(context_type: str, content: str) -> str:
+    if context_type == "manual":
+        return content
     if context_type in ("meeting_audio", "meeting_summary"):
         return f"Transcript (may be partial):\n\n{content}"
     if context_type == "meeting_question":
@@ -138,6 +151,75 @@ def build_user_message(context_type: str, content: str) -> str:
     return f"Screen OCR text:\n\n{content}"
 
 
+def resolve_api_key(explicit: Optional[str] = None) -> str:
+    """API key lookup order: explicit argument -> keyring store -> env/.env."""
+    key = (explicit or "").strip()
+    if not key:
+        try:
+            from utils.key_store import load_key
+
+            key = load_key().strip()
+        except Exception as e:
+            logger.warning("key_store load failed: %s", e)
+    if not key:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+    return key
+
+
+_NO_KEY_MSG = (
+    "No API key found. Open Settings -> API, paste your free key "
+    "from https://console.groq.com, then Save."
+)
+
+
+def _classify_api_error(err: Exception) -> str:
+    """Map a Groq client exception to a short, actionable user message."""
+    text = str(err).lower()
+    if (
+        "401" in text
+        or "invalid_api_key" in text
+        or "invalid api key" in text
+        or "unauthorized" in text
+    ):
+        return "API key was rejected - invalid or revoked. Double-check the key from https://console.groq.com"
+    if any(
+        s in text
+        for s in ("connection", "timed out", "timeout", "getaddrinfo", "unreachable", "failed to resolve")
+    ):
+        return "Network error reaching Groq. Check your internet connection and try again."
+    return f"Groq error: {str(err)[:200]}"
+
+
+def validate_key_and_model(
+    api_key: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Verify the API key works AND that `model_id` is available to it.
+
+    Uses one cheap `models.list` call (no chat completion, no token usage).
+    Returns (ok, human-readable message) — never raises.
+    """
+    load_dotenv()
+    key = resolve_api_key(api_key)
+    if not key:
+        return False, _NO_KEY_MSG
+    if Groq is None:
+        return False, "groq package is not installed. Install it with: pip install groq"
+    try:
+        client = Groq(api_key=key)
+        models = client.models.list()
+        ids = {m.id for m in (getattr(models, "data", None) or [])}
+    except Exception as e:
+        return False, _classify_api_error(e)
+    model = (model_id or MODEL_ID).strip()
+    if ids and model not in ids:
+        return False, (
+            f"Model '{model}' is not available with this API key. "
+            "Pick a model from the list, or check the exact ID at https://console.groq.com/docs/models"
+        )
+    return True, f"API key works - '{model}' is ready."
+
+
 def _get_client() -> Groq:
     load_dotenv()
     if Groq is None:
@@ -145,12 +227,9 @@ def _get_client() -> Groq:
             "groq package is not installed.\n"
             "Install it with: pip install groq"
         )
-    key = os.environ.get("GROQ_API_KEY", "").strip()
+    key = resolve_api_key()
     if not key:
-        raise RuntimeError(
-            "GROQ_API_KEY is not set.\n"
-            "Get a free key at https://console.groq.com and add it to your .env file."
-        )
+        raise RuntimeError(_NO_KEY_MSG)
     return Groq(api_key=key)
 
 
@@ -206,6 +285,35 @@ async def generate_answer(
     return ""
 
 
+def _is_rate_limit_error(err: Exception) -> bool:
+    """Return True if the exception looks like an HTTP 429 rate-limit error."""
+    if RateLimitError is not None and isinstance(err, RateLimitError):
+        return True
+    response = getattr(err, "response", None)
+    if getattr(response, "status_code", None) == 429:
+        return True
+    text = str(err).lower()
+    return "429" in text or "rate limit" in text
+
+
+def _rate_limit_backoff(err: Exception, attempt: int) -> float:
+    """Seconds to wait before retrying after a rate-limit error.
+
+    Honors the server's Retry-After header when present; otherwise backs off
+    exponentially (1s, 2s, 4s, ...). Always capped at 30s.
+    """
+    delay = float(2 ** max(0, attempt - 1))
+    response = getattr(err, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            delay = max(delay, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, 30.0)
+
+
 class AiStreamWorker(QThread):
     chunk_received = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -243,7 +351,7 @@ class AiStreamWorker(QThread):
 
         for model in models_to_try:
             attempts = 0
-            while attempts < 2:
+            while attempts < 4:  # 1 initial + up to 3 rate-limit retries
                 attempts += 1
                 try:
                     stream = client.chat.completions.create(
@@ -265,6 +373,15 @@ class AiStreamWorker(QThread):
                     if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
                         logger.warning("Model %s not found/accessible, trying next model...", model)
                         break
+                    if _is_rate_limit_error(e):
+                        if attempts > 3:
+                            break  # give up on this model after the initial try + 3 retries
+                        delay = _rate_limit_backoff(e, attempts)
+                        logger.warning("Rate limited on %s; retrying in %.1fs", model, delay)
+                        if delay > 3:
+                            self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                        time.sleep(delay)
+                        continue
                     # Fallback: non-streaming request
                     try:
                         resp = client.chat.completions.create(
@@ -284,6 +401,15 @@ class AiStreamWorker(QThread):
                         err_str2 = str(e2).lower()
                         if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
                             break
+                        if _is_rate_limit_error(e2):
+                            if attempts > 3:
+                                break
+                            delay = _rate_limit_backoff(e2, attempts)
+                            logger.warning("Rate limited (non-stream) on %s; retrying in %.1fs", model, delay)
+                            if delay > 3:
+                                self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                            time.sleep(delay)
+                            continue
                     time.sleep(0.3 * attempts)
 
         self.failed.emit(str(last_err) if last_err else "Unknown API error")

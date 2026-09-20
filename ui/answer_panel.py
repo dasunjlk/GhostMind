@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import List, Optional
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QTextCursor
+from PyQt6.QtGui import QTextCursor, QTextOption
 from PyQt6.QtWidgets import (
     QFrame,
     QHBoxLayout,
@@ -58,14 +58,18 @@ class _ThinkingDots(QWidget):
 class _AnswerBlock(QWidget):
     copy_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None) -> None:
+    def __init__(self, parent=None, font_pt: int = 13) -> None:
         super().__init__(parent)
         self._raw_markdown = ""
+        self._font_pt = int(font_pt)
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFrameShape(QFrame.Shape.NoFrame)
         self._text.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._text.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Wrap, never scroll horizontally: long lines must stay inside the overlay.
+        self._text.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._text.setWordWrapMode(QTextOption.WrapMode.WrapAnywhere)
         self._text.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         self._text.document().setDocumentMargin(8)
         self._text.setStyleSheet(
@@ -90,6 +94,8 @@ class _AnswerBlock(QWidget):
         v.addWidget(self._text)
         v.addLayout(row)
 
+        self.apply_font_size(self._font_pt)
+
     def _on_copy(self) -> None:
         self.copy_requested.emit(self._raw_markdown or self._text.toPlainText())
         self._copy_btn.setText("Copied!")
@@ -112,6 +118,13 @@ class _AnswerBlock(QWidget):
         self._raw_markdown = md
         self.set_html(parse_and_render(md))
 
+    def apply_font_size(self, pt: int) -> None:
+        self._font_pt = int(pt)
+        self._text.setStyleSheet(
+            f"QTextEdit {{ background: transparent; color: #E0E0E0; "
+            f"border: 1px solid #1E3A2B; border-radius: 6px; font-size: {self._font_pt}px; }}"
+        )
+
 
 class AnswerPanel(QWidget):
     """Hosts multiple answer blocks, thinking state, and clear control."""
@@ -124,6 +137,7 @@ class AnswerPanel(QWidget):
         self._current_block: Optional[_AnswerBlock] = None
         self._stream_buffer = ""
         self._thinking: Optional[_ThinkingDots] = None
+        self._font_pt = 13
 
         header = QHBoxLayout()
         title = QLabel("Answers")
@@ -180,6 +194,36 @@ class AnswerPanel(QWidget):
         bar = self._scroll.verticalScrollBar()
         bar.setValue(bar.maximum())
 
+    def apply_font_size(self, pt: int) -> None:
+        """Resize answer text; existing blocks re-render, future ones inherit."""
+        self._font_pt = int(pt)
+        for b in self._blocks:
+            b.apply_font_size(self._font_pt)
+
+    def add_user_message(self, text: str) -> None:
+        """Show the user's typed question as a right-aligned chat bubble.
+
+        Only used for manual chat input (F-01); OCR/scan flows keep their
+        existing presentation without a user bubble.
+        """
+        bubble = QWidget(self._inner)
+        v = QVBoxLayout(bubble)
+        v.setContentsMargins(0, 2, 0, 2)
+        lbl = QLabel(text)
+        lbl.setWordWrap(True)
+        lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        lbl.setMaximumWidth(380)
+        lbl.setStyleSheet(
+            f"QLabel {{ background:#162B1E; color:#DFFFEF; border:1px solid #00FF88;"
+            f" border-radius:8px; padding:6px 10px; font-size:{self._font_pt}px; }}"
+        )
+        row = QHBoxLayout()
+        row.addStretch(1)  # push the bubble to the right edge
+        row.addWidget(lbl)
+        v.addLayout(row)
+        self._inner_layout.addWidget(bubble)
+        self._scroll_to_bottom()
+
     def start_thinking(self) -> None:
         self._hide_thinking()
         self._stream_buffer = ""
@@ -199,7 +243,7 @@ class AnswerPanel(QWidget):
     def begin_answer_stream(self) -> None:
         self._hide_thinking()
         self._stream_buffer = ""
-        block = _AnswerBlock(self._inner)
+        block = _AnswerBlock(self._inner, font_pt=self._font_pt)
         block.copy_requested.connect(self._copy_to_clipboard)
         self._inner_layout.addWidget(block)
         self._blocks.append(block)
@@ -223,7 +267,7 @@ class AnswerPanel(QWidget):
         if self._current_block:
             self._current_block.set_html(f"<p style='color:#FF4444;'>{message}</p>")
         else:
-            block = _AnswerBlock(self._inner)
+            block = _AnswerBlock(self._inner, font_pt=self._font_pt)
             block.set_html(f"<p style='color:#FF4444;'>{message}</p>")
             self._inner_layout.addWidget(block)
             self._blocks.append(block)

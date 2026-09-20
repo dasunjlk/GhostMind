@@ -3,7 +3,6 @@ Live subtitle ticker: last few lines, question highlighting, Mic/System/Lecturer
 """
 from __future__ import annotations
 
-import re
 from collections import deque
 from typing import Deque
 
@@ -11,16 +10,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PyQt6.QtWidgets import QFrame, QHBoxLayout, QLabel, QPushButton, QTextEdit, QVBoxLayout, QWidget
 
-
-_QUESTION_RE = re.compile(
-    r"(^|\b)(who|what|when|where|why|how|could you|can you|should we|is it|are we|"
-    r"do you|did you|will you|would you|shall we|let me ask|tell me|explain|define|"
-    r"which|whose|whom|how much|how many|how long|how far|how often|how old|"
-    r"is there|are there|was there|were there|have you|has there|"
-    r"can we|could we|should I|would it|do we|does it|"
-    r"what about|what if|what's|what does|what do)\b",
-    re.IGNORECASE,
-)
+from core.question_detect import is_question
 
 
 class SubtitleBar(QWidget):
@@ -74,6 +64,13 @@ class SubtitleBar(QWidget):
         lay.addLayout(header)
         lay.addWidget(self._view)
 
+    def apply_font_size(self, pt: int) -> None:
+        """Resize subtitle text (Preferences tab)."""
+        self._view.setStyleSheet(
+            f"QTextEdit {{ background: #0D0D0D; color: #E0E0E0; border: 1px solid #1E1E1E; "
+            f"border-radius: 6px; font-size: {int(pt)}px; }}"
+        )
+
     def append_line(self, line: str) -> None:
         line = line.strip()
         if not line:
@@ -117,7 +114,7 @@ class SubtitleBar(QWidget):
                 fmt = lecturer_fmt if speaker == "Lecturer" else label_fmt
                 cursor.setCharFormat(fmt)
                 cursor.insertText(f"{speaker}: ")
-            is_q = "?" in rest or bool(_QUESTION_RE.search(rest))
+            is_q = is_question(rest)
             cursor.setCharFormat(question_fmt if is_q else normal)
             cursor.insertText(rest + "\n")
 

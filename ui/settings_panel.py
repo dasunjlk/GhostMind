@@ -1,12 +1,13 @@
 """
-In-overlay tabbed settings: General, Audio, Shortcuts, AI & API, and About.
+In-overlay tabbed settings: General, Audio, Shortcuts, API, and About.
 """
 from __future__ import annotations
 
-import os
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from utils import key_store
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -27,7 +29,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import AVAILABLE_MODELS, DEFAULT_MODEL
+from core.ai_engine import ADD_CUSTOM_MODEL_SENTINEL, AVAILABLE_MODELS, DEFAULT_MODEL
 from core.audio_listener import get_input_devices
 from core.screen_reader import get_monitors
 from version import __app_name__, __author__, __copyright__, __description__, __github__, __version__
@@ -138,6 +140,7 @@ class SettingsPanel(QWidget):
         self._hk_sub = QLineEdit()
         self._hk_export = QLineEdit()
         self._hk_click = QLineEdit()
+        self._hk_ask = QLineEdit()
 
         form_keys.addRow("Toggle Visibility:", self._hk_vis)
         form_keys.addRow("Screen Scan (OCR):", self._hk_scan)
@@ -145,32 +148,51 @@ class SettingsPanel(QWidget):
         form_keys.addRow("Toggle Subtitles:", self._hk_sub)
         form_keys.addRow("Export Transcript:", self._hk_export)
         form_keys.addRow("Toggle Click-Through:", self._hk_click)
+        form_keys.addRow("Focus Question Box:", self._hk_ask)
 
-        # 4. AI & API Tab
+        # 4. API Tab
         tab_api = QWidget()
         form_api = QFormLayout(tab_api)
         form_api.setContentsMargins(10, 12, 10, 12)
         form_api.setSpacing(10)
 
+        # Model dropdown: all supported models + any user-added custom IDs,
+        # plus an entry that opens the "add custom model" prompt.
         self._ai_model = QComboBox()
-        for model_id, label in AVAILABLE_MODELS:
-            self._ai_model.addItem(label, model_id)
-
+        self._custom_models: List[str] = []
+        self._populate_model_combo()
 
         self._api_key = QLineEdit()
         self._api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
 
-        test_btn = QPushButton("Test API Key")
-        test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        test_btn.setStyleSheet(
+        self._key_status = QLabel("")
+        self._key_status.setWordWrap(True)
+        self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+
+        self._clear_key_btn = QPushButton("Clear stored key")
+        self._clear_key_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._clear_key_btn.setStyleSheet(
+            "QPushButton{background:#141414;color:#CC6666;border:1px solid #552222;padding:5px 10px;border-radius:4px;font-size:11px;}"
+            "QPushButton:hover{background:#2A1414;color:#FF8888;border-color:#CC6666;}"
+        )
+        self._clear_key_btn.clicked.connect(self._on_clear_key)
+
+        self._check_btn = QPushButton("Check key & model")
+        self._check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._check_btn.setStyleSheet(
             "QPushButton{background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:6px 12px;border-radius:4px;}"
             "QPushButton:hover{background:#1E3E2B;}"
         )
-        test_btn.clicked.connect(self._on_test_api)
+        self._check_btn.clicked.connect(self._on_test_api)
 
         form_api.addRow("AI Model:", self._ai_model)
         form_api.addRow("Groq API Key:", self._api_key)
-        form_api.addRow("", test_btn)
+        status_row = QHBoxLayout()
+        status_row.addWidget(self._key_status, 1)
+        status_row.addWidget(self._clear_key_btn)
+        form_api.addRow("", status_row)
+        form_api.addRow("", self._check_btn)
 
         # 5. About Tab
         tab_about = QWidget()
@@ -208,11 +230,29 @@ class SettingsPanel(QWidget):
         about_lay.addWidget(link_btn)
         about_lay.addStretch(1)
 
+        # 6. Preferences Tab (appearance & future personalization options)
+        tab_prefs = QWidget()
+        form_prefs = QFormLayout(tab_prefs)
+        form_prefs.setContentsMargins(10, 12, 10, 12)
+        form_prefs.setSpacing(8)
+
+        self._font_size = QSpinBox()
+        self._font_size.setRange(9, 24)
+        self._font_size.setSuffix(" pt")
+        self._font_size.setValue(int(self._data.get("font_size", 13)))
+        self._font_size.setToolTip("Base text size for answers, subtitles, and input (9-24)")
+        form_prefs.addRow("Font size:", self._font_size)
+
+        prefs_hint = QLabel("More appearance options coming in future updates.")
+        prefs_hint.setStyleSheet("color:#666;font-size:11px;")
+        form_prefs.addRow(prefs_hint)
+
         # Assemble Tabs
         self._tabs.addTab(tab_general, "General")
         self._tabs.addTab(tab_audio, "Audio")
         self._tabs.addTab(tab_keys, "Shortcuts")
-        self._tabs.addTab(tab_api, "AI & API")
+        self._tabs.addTab(tab_api, "API")
+        self._tabs.addTab(tab_prefs, "Preferences")
         self._tabs.addTab(tab_about, "About")
 
         # Bottom Buttons
@@ -265,6 +305,7 @@ class SettingsPanel(QWidget):
         self._api_signals.finished.connect(self._show_api_result)
 
         self._opacity.valueChanged.connect(self._on_opacity_slider_changed)
+        self._ai_model.currentIndexChanged.connect(self._on_model_changed)
         self.apply_data(self._data)
 
     def _on_opacity_slider_changed(self, v: int) -> None:
@@ -334,9 +375,19 @@ class SettingsPanel(QWidget):
                 
         self._whisper.setCurrentText(str(self._data.get("whisper_model", "base")))
 
-        # AI Model
+        # Preferences
+        self._font_size.setValue(int(self._data.get("font_size", 13)))
+
+        # AI Model (persisted custom IDs may not exist yet in a fresh combo)
+        self._custom_models = list(self._data.get("custom_models") or [])
+        self._populate_model_combo()
         chosen_model = str(self._data.get("ai_model", DEFAULT_MODEL))
         idx = self._ai_model.findData(chosen_model)
+        if idx < 0 and chosen_model:
+            # Model from another machine/import: keep it usable instead of silently
+            # falling back to the default.
+            self._ai_model.addItem(chosen_model, chosen_model)
+            idx = self._ai_model.findData(chosen_model)
         if idx >= 0:
             self._ai_model.setCurrentIndex(idx)
 
@@ -348,11 +399,23 @@ class SettingsPanel(QWidget):
         self._hk_sub.setText(str(hk.get("toggle_subtitles", "ctrl+shift+t")))
         self._hk_export.setText(str(hk.get("export_transcript", "ctrl+shift+e")))
         self._hk_click.setText(str(hk.get("toggle_click_through", "ctrl+shift+x")))
+        self._hk_ask.setText(str(hk.get("ask_question", "ctrl+shift+q")))
 
-        # API Key
-        key = os.environ.get("GROQ_API_KEY", "")
-        if key:
-            self._api_key.setPlaceholderText("•••••••••••••••• (Active from environment)")
+        # API key status (never render the key itself)
+        stored = ""
+        try:
+            stored = key_store.load_key()
+        except Exception:
+            pass
+        if stored:
+            where = "Windows Credential Manager" if key_store.is_keyring_available() else "config/settings.toml (plaintext fallback)"
+            self._key_status.setText(f"● Key stored in {where}")
+            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+            self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
+        else:
+            self._key_status.setText("No key stored.")
+            self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+            self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
         self._api_key.clear()
 
     def collect_data(self) -> Dict[str, Any]:
@@ -374,7 +437,9 @@ class SettingsPanel(QWidget):
             "capture_system": self._cap_sys.currentText() == "yes",
             "loopback_device": loopback_id,
             "whisper_model": self._whisper.currentText(),
+            "font_size": int(self._font_size.value()),
             "ai_model": self._ai_model.currentData() or DEFAULT_MODEL,
+            "custom_models": list(self._custom_models),
             "hotkeys": {
                 "toggle_visibility": self._hk_vis.text().strip(),
                 "screen_scan": self._hk_scan.text().strip(),
@@ -382,46 +447,131 @@ class SettingsPanel(QWidget):
                 "toggle_subtitles": self._hk_sub.text().strip(),
                 "export_transcript": self._hk_export.text().strip(),
                 "toggle_click_through": self._hk_click.text().strip(),
+                "ask_question": self._hk_ask.text().strip(),
             },
         }
+
+    def _populate_model_combo(self) -> None:
+        self._ai_model.blockSignals(True)
+        self._ai_model.clear()
+        for model_id, label in AVAILABLE_MODELS:
+            self._ai_model.addItem(label, model_id)
+        for custom_id in self._custom_models:
+            if self._ai_model.findData(custom_id) < 0:
+                self._ai_model.addItem(f"{custom_id} (custom)", custom_id)
+        if self._ai_model.findData(ADD_CUSTOM_MODEL_SENTINEL) < 0:
+            self._ai_model.addItem("＋ Add custom model…", ADD_CUSTOM_MODEL_SENTINEL)
+        self._ai_model.blockSignals(False)
+
+    def _on_model_changed(self, index: int) -> None:
+        if self._ai_model.currentData() != ADD_CUSTOM_MODEL_SENTINEL:
+            return
+        # Reopen the add dialog; addSelectingItself restores the previous choice.
+        name = self._prompt_custom_model()
+        if name:
+            self._add_custom_model(name)
+        else:
+            self._ai_model.setCurrentIndex(max(0, self._ai_model.findData(DEFAULT_MODEL)))
+
+    def _prompt_custom_model(self) -> str:
+        text, ok = QInputDialog.getText(
+            self,
+            "Add Custom Model",
+            "Model ID (as listed at console.groq.com/docs/models):\n"
+            "Example: qwen/qwen3.8-27b",
+            QLineEdit.EchoMode.Normal,
+            "",
+        )
+        if not ok:
+            return ""
+        model_id = text.strip()
+        if not model_id:
+            QMessageBox.warning(self, "Add Custom Model", "Model ID cannot be empty.")
+            return ""
+        if " " in model_id:
+            QMessageBox.warning(self, "Add Custom Model", "Model IDs cannot contain spaces.")
+            return ""
+        return model_id
+
+    def _add_custom_model(self, model_id: str) -> None:
+        if model_id not in self._custom_models:
+            self._custom_models.append(model_id)
+        self._populate_model_combo()
+        idx = self._ai_model.findData(model_id)
+        if idx >= 0:
+            self._ai_model.setCurrentIndex(idx)
 
     def _emit_save(self) -> None:
         d = self.collect_data()
         k = self._api_key.text().strip()
         if k:
-            os.environ["GROQ_API_KEY"] = k
+            try:
+                backend = key_store.save_key(k)
+                where = (
+                    "Windows Credential Manager"
+                    if backend == "keyring"
+                    else "config/settings.toml (plaintext fallback)"
+                )
+                self._key_status.setText(f"● Key saved to {where} — checking…")
+                self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+                self._api_key.clear()
+                self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
+            except Exception as e:
+                QMessageBox.warning(self, "Key Storage Failed", str(e))
         self.saved.emit(d)
+        # Immediate key+model verification for what the user just chose.
+        self._on_test_api()
+
+    def _on_clear_key(self) -> None:
+        confirm = QMessageBox.question(
+            self,
+            "Clear Stored Key",
+            "Remove the stored API key from this computer?\n"
+            "AI answers will stop working until you enter a new key.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            key_store.clear_key()
+        except Exception as e:
+            QMessageBox.warning(self, "Key Storage Failed", str(e))
+            return
+        self._key_status.setText("No key stored.")
+        self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+        self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
+        self._api_key.clear()
 
     def _on_test_api(self) -> None:
-        k = self._api_key.text().strip() or os.environ.get("GROQ_API_KEY", "")
-        if not k:
-            QMessageBox.warning(self, "API Key Required", "Enter an API key or set GROQ_API_KEY in .env")
-            return
-
+        """Verify key + model together (models.list, no token usage), inline result."""
         model = self._ai_model.currentData() or DEFAULT_MODEL
-
+        if model == ADD_CUSTOM_MODEL_SENTINEL:
+            QMessageBox.warning(
+                self,
+                "AI Model Required",
+                "Choose a model from the list first, or use '＋ Add custom model…'.",
+            )
+            return
+        k = self._api_key.text().strip()
+        self._key_status.setText("● Checking key and model…")
+        self._key_status.setStyleSheet("color:#FFAA00;font-size:11px;")
+        self._check_btn.setEnabled(False)
 
         def _work() -> None:
-            try:
-                from groq import Groq
+            from core.ai_engine import validate_key_and_model
 
-                client = Groq(api_key=k)
-                client.chat.completions.create(
-                    model=model,
-                    max_tokens=16,
-                    messages=[{"role": "user", "content": "Reply with OK only."}],
-                )
-                self._api_signals.finished.emit(True, f"Groq API connected successfully using {model}!")
-            except Exception as e:
-                self._api_signals.finished.emit(False, f"API test failed:\n{e}")
+            ok, msg = validate_key_and_model(api_key=k, model_id=model)
+            self._api_signals.finished.emit(ok, msg)
 
         threading.Thread(target=_work, daemon=True).start()
 
     def _show_api_result(self, ok: bool, msg: str) -> None:
+        self._check_btn.setEnabled(True)
         if ok:
-            QMessageBox.information(self, "API Status", msg)
+            self._key_status.setText(f"● {msg}")
+            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
         else:
-            QMessageBox.warning(self, "API Status", msg)
+            self._key_status.setText(f"● {msg}")
+            self._key_status.setStyleSheet("color:#FF5555;font-size:11px;")
 
     def _on_import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

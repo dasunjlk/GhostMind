@@ -30,8 +30,8 @@ def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
     """Resample any 1D audio array to 16,000 Hz."""
     if orig_rate == SAMPLE_RATE or len(audio) == 0:
         return audio.astype(np.float32)
-    if orig_rate == 48000:
-        return audio[::3].astype(np.float32)
+    # Linear interpolation for every rate: naive decimation (e.g. audio[::3]
+    # for 48 kHz) aliases high frequencies into the speech band.
     target_len = int(len(audio) * SAMPLE_RATE / orig_rate)
     if target_len <= 0:
         return np.empty(0, dtype=np.float32)
@@ -40,6 +40,19 @@ def resample_to_16k(audio: np.ndarray, orig_rate: int) -> np.ndarray:
         np.arange(len(audio)),
         audio,
     ).astype(np.float32)
+
+
+def has_microphone() -> bool:
+    """True if the system reports at least one audio input (microphone) device.
+
+    Treats sounddevice/PortAudio errors as 'no mic' so callers can warn instead of
+    crashing; devices with zero input channels don't count (output-only devices).
+    """
+    try:
+        return len(get_input_devices()) > 0
+    except Exception as e:  # PortAudio can raise on headless / broken audio stacks
+        logger.warning("microphone detection failed: %s", e)
+        return False
 
 
 def get_input_devices() -> List[Dict[str, Any]]:

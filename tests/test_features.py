@@ -129,9 +129,9 @@ class TestSettingsPanelTabs:
             },
         }
         panel = SettingsPanel(initial)
-        assert panel._tabs.count() == 5
-        tab_names = [panel._tabs.tabText(i) for i in range(5)]
-        assert tab_names == ["General", "Audio", "Shortcuts", "AI & API", "About"]
+        assert panel._tabs.count() == 6
+        tab_names = [panel._tabs.tabText(i) for i in range(panel._tabs.count())]
+        assert tab_names == ["General", "Audio", "Shortcuts", "API", "Preferences", "About"]
 
         # Test data collection
         collected = panel.collect_data()

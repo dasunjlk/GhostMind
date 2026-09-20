@@ -9,5 +9,6 @@ sounddevice>=0.4.6
 pywin32>=306
 keyboard>=0.13.5
 toml>=0.10.2
+keyring>=24.3.0
 opencv-python>=4.9.0
 numpy>=1.26.0

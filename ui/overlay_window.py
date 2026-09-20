@@ -8,20 +8,37 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import (
+    QAbstractAnimation,
     QEasingCurve,
     QObject,
     QPoint,
+    QPointF,
     QRect,
+    QRectF,
     Qt,
     QTimer,
     QVariantAnimation,
     QEvent,
     pyqtSignal,
 )
-from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QKeyEvent, QMouseEvent
+from PyQt6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPixmap,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -97,6 +114,123 @@ class _RoundCtl(QPushButton):
         )
 
 
+class _CaptureIconWidget(QWidget):
+    """Zoom-style capture toggle: drawn mic/speaker glyph, red slash when off.
+
+    Click toggles; the app state lives in the capture settings that callers sync.
+    """
+
+    toggled = pyqtSignal(bool)
+
+    def __init__(
+        self,
+        kind: str,
+        enabled: bool,
+        tooltip_base: str,
+        has_device: bool = True,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self._kind = kind
+        self._on = bool(enabled)
+        self._has_device = bool(has_device)
+        self._tooltip_base = tooltip_base
+        self.setFixedSize(26, 26)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(self._tooltip_text())
+
+    def set_has_device(self, has: bool) -> None:
+        """Mark the hardware missing (mic icon shows an amber "!" badge)."""
+        if self._has_device != bool(has):
+            self._has_device = bool(has)
+            self.update()
+            self.setToolTip(self._tooltip_text())
+
+    def is_on(self) -> bool:
+        return self._on
+
+    def set_on(self, on: bool) -> None:
+        if self._on != bool(on):
+            self._on = bool(on)
+            self.update()
+            self.setToolTip(self._tooltip_text())
+
+    def _tooltip_text(self) -> str:
+        if self._kind == "mic" and not self._has_device:
+            return f"{self._tooltip_base} — no microphone detected on this system"
+        return f"{self._tooltip_base} — {'on' if self._on else 'off'} (click to toggle)"
+
+    def mousePressEvent(self, a0) -> None:  # noqa: N802 (Qt naming)
+        self._on = not self._on
+        self.update()
+        self.setToolTip(self._tooltip_text())
+        self.toggled.emit(self._on)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 (Qt naming)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = self.rect()
+        if self.underMouse():
+            p.fillRect(r, QColor(34, 34, 34))
+
+        color = QColor("#00FF88") if self._on else QColor("#888888")
+        cx = r.center().x()
+        right_edge = r.right()
+        bottom_edge = r.bottom()
+
+        if self._kind == "mic":
+            # Capsule + arc + stand, from a 7x13 cell centered in the widget
+            w, h = 7.0, 13.0
+            x = cx - w / 2.0
+            y = (r.height() - h) / 2.0 - 1.5
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(x, y, w, h), 3.5, 3.5)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.6)
+            p.setPen(pen)
+            p.drawArc(QRectF(x - 3.5, y + 2.0, w + 7.0, h + 2.0), -60 * 16, 120 * 16 - 1)
+            p.drawLine(QPointF(cx, y + h + 0.5), QPointF(cx, bottom_edge - 3.0))
+            p.drawLine(QPointF(cx - 3.0, bottom_edge - 3.0), QPointF(cx + 3.0, bottom_edge - 3.0))
+        else:  # "speaker"
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            box_w, box_h = 6.0, 8.0
+            bx = cx - 6.5 - box_w / 2.0
+            by = (r.height() - box_h) / 2.0
+            p.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(bx, by),
+                        QPointF(bx + box_w, by - 1.5),
+                        QPointF(bx + box_w, by + box_h + 1.5),
+                        QPointF(bx, by + box_h),
+                    ]
+                )
+            )
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.7)
+            p.setPen(pen)
+            for ax in (bx + box_w, bx + box_w + 3.0):
+                p.drawArc(QRectF(ax, r.height() / 2.0 - 5.5, 5.0, 11.0), -55 * 16, 110 * 16 - 1)
+
+        if self._kind == "mic" and not self._has_device:
+            # Zoom-style amber "!" badge: no input hardware on this system
+            pen = QPen(QColor(255, 193, 7), 2.0)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.right() - 9.5, r.top() + 5.0), QPointF(r.right() - 9.5, r.top() + 11.0))
+            p.drawPoint(QPointF(r.right() - 9.5, r.top() + 13.5))
+
+        if not self._on:
+            # Zoom-style red slash over the glyph
+            pen = QPen(QColor(255, 68, 68), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.left() + 4, r.top() + 4), QPointF(right_edge - 4, bottom_edge - 4))
+
+
 def _is_worker_active(worker: Optional[QThread]) -> bool:
     """Safely check if a QThread worker is alive without triggering C++ deleted object errors."""
     if worker is None:
@@ -106,13 +240,15 @@ def _is_worker_active(worker: Optional[QThread]) -> bool:
         if sip.isdeleted(worker):
             return False
         return bool(worker.isRunning())
-    except (RuntimeError, ReferenceError):
+    except (RuntimeError, ReferenceError, TypeError):
+        # TypeError: a non-sip object was passed (defensive; should not happen)
         return False
 
 
 
 class OverlayWindow(QMainWindow):
     settings_changed = pyqtSignal(dict)
+    geometry_changed = pyqtSignal(dict)
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
@@ -128,6 +264,11 @@ class OverlayWindow(QMainWindow):
         self._scan_worker: Optional[ScreenScanWorker] = None
         self._visible_target = True
         self.close_event_allowed = True
+        self._opacity_anim: Optional[QVariantAnimation] = None
+        self._restoring_geometry = False
+        self._geometry_save_timer = QTimer(self)
+        self._geometry_save_timer.setSingleShot(True)
+        self._geometry_save_timer.timeout.connect(self._emit_geometry)
 
         _load_fonts(repo_root)
 
@@ -139,6 +280,7 @@ class OverlayWindow(QMainWindow):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(480, 600)
         self.setMinimumSize(320, 360)
+        self._restore_window_geometry()
 
         ico_path = self._repo_root / "assets" / "icon.ico"
         if ico_path.is_file():
@@ -192,6 +334,21 @@ class OverlayWindow(QMainWindow):
         btn_min.clicked.connect(self._minimize_hide)
 
 
+        # Scan button: same action as the screen-scan hotkey (Ctrl+Shift+S)
+        btn_scan = QPushButton("⚡ Scan")
+        btn_scan.setObjectName("scanBtn")
+        btn_scan.setToolTip("Scan screen & answer (Ctrl+Shift+S)")
+        btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_scan.setStyleSheet(
+            "#scanBtn { background: transparent; color: #00FF88; border: 1px solid #00FF88;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: bold; }"
+            "#scanBtn:hover { background: rgba(0, 255, 136, 0.15); }"
+            "#scanBtn:pressed { background: rgba(0, 255, 136, 0.30); }"
+            "#scanBtn:disabled { color: #556; border-color: #556; }"
+        )
+        btn_scan.clicked.connect(self.trigger_screen_scan)
+        self._btn_scan = btn_scan
+
         # Settings Gear Icon Button
         btn_set = QPushButton("⚙")
         btn_set.setToolTip("Settings")
@@ -203,11 +360,32 @@ class OverlayWindow(QMainWindow):
         )
         btn_set.clicked.connect(self._toggle_settings)
 
+        # Quick capture toggles (Zoom-style): click to enable/disable mic / system
+        # audio. Kept in sync with the Audio tab via settings_changed/apply_settings.
+        self._mic_toggle = _CaptureIconWidget(
+            "mic", bool(self._settings.get("capture_mic", True)), "Microphone capture"
+        )
+        self._mic_toggle.toggled.connect(self._on_quick_capture_toggle)
+        self._sys_toggle = _CaptureIconWidget(
+            "speaker",
+            bool(self._settings.get("capture_system", True)),
+            "System audio capture",
+        )
+        self._sys_toggle.toggled.connect(self._on_quick_capture_toggle)
+        # main.py probes audio hardware and calls set_microphone_available().
+        self._has_microphone: Optional[bool] = None
+
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
         hl.addSpacing(8)
         hl.addWidget(title)
         hl.addStretch(1)
+        hl.addWidget(btn_scan)
+        hl.addSpacing(6)
+        hl.addWidget(self._mic_toggle)
+        hl.addSpacing(2)
+        hl.addWidget(self._sys_toggle)
+        hl.addSpacing(4)
         hl.addWidget(btn_set)
 
         root.addWidget(header)
@@ -240,6 +418,32 @@ class OverlayWindow(QMainWindow):
         self._tabs.addTab(sub_host, "Subtitles")
         mp_lay.addWidget(self._tabs, 1)
 
+        # --- Manual question input (F-01) ---
+        self._ask_row = QWidget()
+        ask_lay = QHBoxLayout(self._ask_row)
+        ask_lay.setContentsMargins(6, 0, 6, 6)
+        ask_lay.setSpacing(6)
+        self._ask_input = QLineEdit()
+        self._ask_input.setPlaceholderText("Ask anything… (Enter to send, Shift+Enter for new line)")
+        self._ask_input.setStyleSheet(
+            "QLineEdit { background:#141414; color:#E0E0E0; border:1px solid #333;"
+            " border-radius:4px; padding:4px 8px; font-size:12px; }"
+            "QLineEdit:focus { border-color:#00FF88; }"
+        )
+        self._ask_input.returnPressed.connect(self._send_manual_question)
+        self._ask_btn = QPushButton("Ask")
+        self._ask_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ask_btn.setStyleSheet(
+            "QPushButton { background:#162B1E; color:#00FF88; border:1px solid #00FF88;"
+            " padding:4px 12px; border-radius:4px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#1E3E2B; }"
+            "QPushButton:disabled { color:#556; border-color:#556; }"
+        )
+        self._ask_btn.clicked.connect(self._send_manual_question)
+        ask_lay.addWidget(self._ask_input, 1)
+        ask_lay.addWidget(self._ask_btn)
+        mp_lay.addWidget(self._ask_row)
+
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
@@ -255,8 +459,8 @@ class OverlayWindow(QMainWindow):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._trigger_scan)
 
-        self._opacity_anim: Optional[QVariantAnimation] = None
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
 
         self._header_drag = _HeaderDragFilter(self)
         header.installEventFilter(self._header_drag)
@@ -269,7 +473,35 @@ class OverlayWindow(QMainWindow):
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
         self._apply_auto_timer_state()
         self._settings_panel.apply_data(self._settings)
+        self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
+        self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
         self._reapply_stealth()
+
+    def apply_font_size(self, pt: int) -> None:
+        """Apply the user's font size preference across the app (Preferences)."""
+        pt = max(9, min(24, int(pt)))
+        f = self.font()
+        f.setPointSize(pt)
+        self.setFont(f)  # cascades to headers, tabs, buttons, settings panel
+        self._answer_panel.apply_font_size(pt)
+        self._subtitle_bar.apply_font_size(pt)
+        self._ask_input.setStyleSheet(
+            f"QLineEdit {{ background:#141414; color:#E0E0E0; border:1px solid #333;"
+            f" border-radius:4px; padding:4px 8px; font-size:{pt}px; }}"
+            f"QLineEdit:focus {{ border-color:#00FF88; }}"
+        )
+
+    def _on_quick_capture_toggle(self, _on: bool) -> None:
+        """Header mic/speaker icons changed: persist + restart audio capture."""
+        self._settings["capture_mic"] = self._mic_toggle.is_on()
+        self._settings["capture_system"] = self._sys_toggle.is_on()
+        self.settings_changed.emit(dict(self._settings))
+
+    def set_microphone_available(self, available: bool) -> None:
+        """Show an amber "!" on the mic icon when the system has no input device."""
+        self._has_microphone = bool(available)
+        self._mic_toggle.set_has_device(bool(available))
 
     def push_subtitle_line(self, line: str) -> None:
         self._subtitle_bar.append_line(line)
@@ -291,18 +523,46 @@ class OverlayWindow(QMainWindow):
         self._tabs.setCurrentIndex(0)
         self._start_ai(content.strip(), context_type)
 
+    def focus_question_input(self) -> None:
+        """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
+        if self._stack.currentIndex() == 1:
+            self._stack.setCurrentIndex(0)
+            self._settings_panel.hide()
+        self._tabs.setCurrentIndex(0)
+        if not self.isVisible():
+            self.toggle_visibility_animated()
+        self.raise_()
+        self._ask_input.setFocus()
+
+    def _send_manual_question(self) -> None:
+        """Ask button / Enter in the manual question box (F-01)."""
+        text = self._ask_input.text().strip()
+        if not text:
+            return
+        if _is_worker_active(self._ai_worker):
+            # Send rejected: keep the typed text so nothing is lost.
+            self._answer_panel.end_stream_error("Already processing another answer.")
+            return
+        self._ask_input.clear()  # accepted: free the box for the next question
+        # Chat-style: echo the user's message in the panel. Scan/OCR answers do
+        # not get this bubble — only typed messages do (F-01).
+        self._answer_panel.add_user_message(text)
+        self.request_ai_answer(text, "manual")
+
     def trigger_screen_scan(self) -> None:
         if _is_worker_active(self._scan_worker):
             return
         mid = int(self._settings.get("monitor_id", 1))
         self._tabs.setCurrentIndex(0)
         self._answer_panel.start_thinking()
+        self._btn_scan.setEnabled(False)
         worker = ScreenScanWorker(mid)
         self._scan_worker = worker
 
         def _cleanup_scan() -> None:
             if self._scan_worker is worker:
                 self._scan_worker = None
+            self._btn_scan.setEnabled(True)
 
         worker.finished.connect(_cleanup_scan)
         worker.finished.connect(worker.deleteLater)
@@ -437,10 +697,80 @@ class OverlayWindow(QMainWindow):
     def moveEvent(self, e) -> None:
         super().moveEvent(e)
         self._reapply_stealth()
+        self._schedule_geometry_save()
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._reapply_stealth()
+        self._schedule_geometry_save()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self._flush_geometry_save()
+
+    # --- window geometry persistence (R-04) ---
+    def _restore_window_geometry(self) -> None:
+        """Restore last saved size/position, clamped into available screen space."""
+        self._restoring_geometry = True
+        try:
+            w = self._settings.get("window_w")
+            h = self._settings.get("window_h")
+            if isinstance(w, int) and isinstance(h, int) and w >= 320 and h >= 360:
+                self.resize(w, h)
+            x = self._settings.get("window_x")
+            y = self._settings.get("window_y")
+            if isinstance(x, int) and isinstance(y, int):
+                self.move(self._clamped_position(QPoint(x, y)))
+        finally:
+            self._restoring_geometry = False
+
+    def _clamped_position(self, pos: QPoint) -> QPoint:
+        """Clamp a stored position into visible screen space.
+
+        Handles a disconnected monitor gracefully: falls back to the stored
+        screen name, then to the primary screen, so the window can never be
+        restored stranded offscreen.
+        """
+        screen = QApplication.screenAt(pos)
+        if screen is None:
+            name = self._settings.get("window_screen")
+            screen = next(
+                (s for s in QApplication.screens() if s.name() == name), None
+            ) or QApplication.primaryScreen()
+        if screen is None:
+            return pos
+        avail = screen.availableGeometry()
+        margin = 40
+        x = max(avail.left() - self.width() + margin, min(pos.x(), avail.right() - margin))
+        y = max(avail.top(), min(pos.y(), avail.bottom() - margin))
+        return QPoint(x, y)
+
+    def _schedule_geometry_save(self) -> None:
+        """Debounce geometry persistence; skip during restore and fade animations."""
+        if self._restoring_geometry:
+            return
+        if self._opacity_anim is not None and self._opacity_anim.state() == QAbstractAnimation.State.Running:
+            return
+        self._geometry_save_timer.start(500)
+
+    def _flush_geometry_save(self) -> None:
+        """Persist geometry immediately (e.g. when the window hides)."""
+        self._geometry_save_timer.stop()
+        if not self._restoring_geometry:
+            self._emit_geometry()
+
+    def _emit_geometry(self) -> None:
+        g = self.geometry()
+        screen = QApplication.screenAt(g.center())
+        self.geometry_changed.emit(
+            {
+                "window_x": g.x(),
+                "window_y": g.y(),
+                "window_w": g.width(),
+                "window_h": g.height(),
+                "window_screen": screen.name() if screen else self._settings.get("window_screen"),
+            }
+        )
 
     def _edge_at(self, pos: QPoint) -> Edge:
         g = self.geometry()
@@ -517,6 +847,7 @@ class OverlayWindow(QMainWindow):
 
     def closeEvent(self, e) -> None:
         """Intercept close: hide to tray unless close_event_allowed is True."""
+        self._flush_geometry_save()
         if not self.close_event_allowed:
             e.ignore()
             self.closeRequested.emit()
