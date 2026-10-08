@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import toml
 from dotenv import load_dotenv
 from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QAction, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
+from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from core.ai_engine import DEFAULT_MODEL
@@ -54,14 +54,17 @@ def check_dependencies() -> List[str]:
             "  Install: pip install groq"
         )
 
-    # Groq API key
-    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not groq_key:
-        warnings.append(
-            "GROQ_API_KEY is not set.\n"
-            "  AI answers will not work.\n"
-            "  Get a free key at https://console.groq.com and add it to .env"
-        )
+    # Groq API key: users set this themselves in Settings.
+    # We do not warn at startup — the app starts fine without it.
+    _groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not _groq_key:
+        try:
+            from utils.key_store import load_key
+
+            _groq_key = load_key()
+        except Exception:
+            _groq_key = ""
+    _ = _groq_key  # exercise the import/keyring path, but never warn here
 
     # faster-whisper
     try:
@@ -105,9 +108,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "opacity": 0.92,
     "click_through": False,
     "dwm_cloak": False,
-    "subtitles_enabled": True,
-    "capture_mic": True,
-    "capture_system": True,
+    "subtitles_enabled": False,
+    "capture_mic": False,
+    "capture_system": False,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
 

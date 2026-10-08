@@ -1,0 +1,10 @@
+{
+  "known_latest_version": "",
+  "first_seen_epoch": 0,
+  "last_popup_epoch": 0,
+  "popup_count": 0,
+  "snooze_until_epoch": 0,
+  "failed_attempts": 56,
+  "last_check_epoch": 0,
+  "last_release_json": null
+}

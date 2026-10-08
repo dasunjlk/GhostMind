@@ -168,7 +168,7 @@ class TestWorkerSafety:
         from PyQt6.QtCore import QThread
         from ui.overlay_window import _is_worker_active
         worker = QThread()
-        # Delete underlying C++ object
+        # Delete underlying C++ object so isRunning() raises RuntimeError
         worker.deleteLater()
         qapp.processEvents()
         # Should return False safely without raising RuntimeError

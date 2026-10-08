@@ -126,6 +126,14 @@ class SettingsPanel(QWidget):
         form_aud.addRow("System/Loopback Device:", self._loopback_device)
         form_aud.addRow("Whisper Model:", self._whisper)
 
+        # v1.0: audio capture and subtitle controls are not part of the first release.
+        # Their widgets exist in code, but we hide them so they are not surfaced in UI.
+        # v1.0: audio capture and subtitle controls are not part of the first release.
+        # Their widgets exist in code, but we hide them so they are not surfaced in UI.
+        for _row in (self._cap_mic, self._cap_sys, self._loopback_device, self._whisper):
+            if hasattr(_row, "setVisible"):
+                _row.setVisible(False)
+
         # 3. Shortcuts Tab
         tab_keys = QWidget()
         form_keys = QFormLayout(tab_keys)
@@ -266,6 +274,14 @@ class SettingsPanel(QWidget):
 
         self._opacity.valueChanged.connect(self._on_opacity_slider_changed)
         self.apply_data(self._data)
+
+        self._view_guide_requested = pyqtSignal()
+
+    def _after_guide_requested(self) -> None:
+        """Bridge to the overlay's onboarding so the panel does not own the overlay."""
+        if not getattr(self, "_overlay_ref", None):
+            return
+        self._overlay_ref._onboarding.fire_near_settings()
 
     def _on_opacity_slider_changed(self, v: int) -> None:
         val = v / 100.0
