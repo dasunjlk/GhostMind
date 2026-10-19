@@ -9,7 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, Qt
+from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
 import ui.overlay_window as overlay_window
@@ -184,3 +185,68 @@ class TestSettingsPanel:
         assert overlay._click_guard_interactive is False
         assert not overlay._click_guard_timer.isActive()
         assert stealth_spy[-1] is False
+
+
+class TestHeaderClickThroughToggle:
+    def test_toggle_exists_visible_and_off_by_default(self, overlay):
+        w = overlay._click_through_toggle
+        assert w.is_on() is False
+        assert not w.isHidden(), "v1.0: the pointer toggle stays in the header"
+
+    def test_click_enables_click_through(self, overlay, stealth_spy, monkeypatch):
+        overlay.show()
+        monkeypatch.setattr(
+            overlay_window, "_global_cursor_pos", lambda: _body_point(overlay)
+        )
+        seen: list = []
+        overlay.click_through_changed.connect(seen.append)
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings["click_through"] is True
+        assert seen == [True], "must signal main.py to persist the new value"
+        assert overlay._click_guard_timer.isActive()
+        assert stealth_spy[-1] is True
+
+    def test_click_again_disables(self, overlay, stealth_spy, monkeypatch):
+        overlay.show()
+        monkeypatch.setattr(
+            overlay_window, "_global_cursor_pos", lambda: _body_point(overlay)
+        )
+        overlay.apply_settings({"click_through": True})
+        assert overlay._click_through_toggle.is_on() is True
+        stealth_spy.clear()
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings["click_through"] is False
+        assert overlay._click_through_toggle.is_on() is False
+        assert not overlay._click_guard_timer.isActive()
+        assert stealth_spy[-1] is False
+
+    def test_apply_settings_syncs_icon(self, overlay):
+        overlay.apply_settings({"click_through": True})
+        assert overlay._click_through_toggle.is_on() is True
+        overlay.apply_settings({"click_through": False})
+        assert overlay._click_through_toggle.is_on() is False
+
+    def test_header_click_disables_while_guard_active(self, overlay, stealth_spy, monkeypatch):
+        """The whole point of the header toggle: with click-through on, the
+        cursor over the header makes it interactive, and one click turns it off."""
+        overlay.show()
+        monkeypatch.setattr(
+            overlay_window, "_global_cursor_pos", lambda: _header_point(overlay)
+        )
+        overlay.apply_settings({"click_through": True})
+        overlay._update_click_guard()
+        assert overlay._click_guard_interactive is True
+        stealth_spy.clear()
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings["click_through"] is False
+        assert overlay._click_guard_interactive is False
+        assert stealth_spy[-1] is False
+
+
+class TestSettingsPanelSync:
+    def test_header_toggle_updates_settings_combo(self, overlay, stealth_spy):
+        overlay._stack.setCurrentIndex(1)  # settings page open
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings_panel._click_through.currentText() == "on"
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings_panel._click_through.currentText() == "off"

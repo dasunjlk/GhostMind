@@ -313,6 +313,7 @@ class GhostMindController(QObject):
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
+        self.overlay.click_through_changed.connect(self._on_header_click_through)
         self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
 
@@ -454,6 +455,15 @@ class GhostMindController(QObject):
             QSystemTrayIcon.MessageIcon.Information,
             2000,
         )
+
+    def _on_header_click_through(self, on: bool) -> None:
+        """Header toggle changed: persist only.
+
+        Deliberately avoids _on_settings_changed, which would restart the
+        AudioListener and interrupt subtitles for a UI-only preference.
+        """
+        self.settings["click_through"] = bool(on)
+        save_settings(self.settings)
 
     # --- transcript export ---
     def export_transcript(self) -> None:

@@ -346,6 +346,10 @@ class SettingsPanel(QWidget):
         except Exception:
             pass
 
+    def set_click_through(self, on: bool) -> None:
+        """Sync the combo when the header toggle changes click-through."""
+        self._click_through.setCurrentText("on" if on else "off")
+
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)
 
