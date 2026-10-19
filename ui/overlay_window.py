@@ -65,6 +65,14 @@ class Edge(IntFlag):
 
 FRAME = 8
 
+# Click-through guard poll interval (ms): how fast the header becomes
+# clickable when the cursor enters it while click-through is enabled.
+CLICK_GUARD_INTERVAL_MS = 50
+
+
+def _global_cursor_pos() -> QPoint:
+    return QCursor.pos()
+
 
 def _load_fonts(repo_root: Path) -> None:
     font_dir = repo_root / "assets" / "fonts"
@@ -269,6 +277,14 @@ class OverlayWindow(QMainWindow):
         self._geometry_save_timer.setSingleShot(True)
         self._geometry_save_timer.timeout.connect(self._emit_geometry)
 
+        # Click-through guard: WS_EX_TRANSPARENT is per-HWND, so while
+        # click-through is on we poll the cursor and temporarily drop the
+        # style whenever the header (or the open settings panel) needs clicks.
+        self._click_guard_interactive = False
+        self._click_guard_timer = QTimer(self)
+        self._click_guard_timer.setInterval(CLICK_GUARD_INTERVAL_MS)
+        self._click_guard_timer.timeout.connect(self._update_click_guard)
+
         _load_fonts(repo_root)
 
         self.setWindowFlags(
@@ -461,6 +477,7 @@ class OverlayWindow(QMainWindow):
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
         self.apply_font_size(int(self._settings.get("font_size", 13)))
 
+        self._header = header
         self._header_drag = _HeaderDragFilter(self)
         header.installEventFilter(self._header_drag)
 
@@ -677,7 +694,42 @@ class OverlayWindow(QMainWindow):
         anim.start()
         self._opacity_anim = anim
 
+    def _click_through_enabled(self) -> bool:
+        return bool(self._settings.get("click_through", False))
+
+    def _pointer_in_header(self) -> bool:
+        """True while the cursor is over the header bar (always interactive)."""
+        if not self._header.isVisible():
+            return False
+        rect = QRect(self._header.mapToGlobal(QPoint(0, 0)), self._header.size())
+        return rect.contains(_global_cursor_pos())
+
+    def _sync_click_guard_timer(self) -> None:
+        """Run the guard poll only while click-through is on and the window is shown."""
+        if self._click_through_enabled() and self.isVisible():
+            if not self._click_guard_timer.isActive():
+                self._click_guard_timer.start()
+        else:
+            self._click_guard_timer.stop()
+            self._click_guard_interactive = False
+
+    def _update_click_guard(self) -> None:
+        """Keep the header / open settings panel clickable despite click-through.
+
+        The rest of the overlay stays transparent and passes clicks through.
+        """
+        if not (self._click_through_enabled() and self.isVisible()):
+            self._click_guard_timer.stop()
+        interactive = bool(
+            self.isVisible()
+            and (self._stack.currentIndex() == 1 or self._pointer_in_header())
+        )
+        if interactive != self._click_guard_interactive:
+            self._click_guard_interactive = interactive
+            self._reapply_stealth()
+
     def _reapply_stealth(self) -> None:
+        self._sync_click_guard_timer()
         try:
             hwnd = int(self.winId())
         except Exception:
@@ -685,7 +737,7 @@ class OverlayWindow(QMainWindow):
         if hwnd:
             apply_stealth(
                 hwnd,
-                click_through=bool(self._settings.get("click_through", False)),
+                click_through=self._click_through_enabled() and not self._click_guard_interactive,
                 dwm_cloak=bool(self._settings.get("dwm_cloak", False)),
             )
 
@@ -705,6 +757,7 @@ class OverlayWindow(QMainWindow):
 
     def hideEvent(self, e) -> None:
         super().hideEvent(e)
+        self._sync_click_guard_timer()
         self._flush_geometry_save()
 
     # --- window geometry persistence (R-04) ---
