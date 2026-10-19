@@ -17,6 +17,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - Settings import/export (JSON)
 - Auto-start on Windows login
 - File logging with rotation (`ghostmind.log`)
+- Anonymous error reporting to Sentry (stack traces + app context only; no transcripts, questions, usernames, or hostnames — disable with `GHOSTMIND_NO_TELEMETRY=1`)
 - Startup dependency check with friendly warnings
 - Keyboard navigation (Escape, Tab, Backtab)
 - Settings stored in `config/settings.toml` (created on first save; file is gitignored)
@@ -165,7 +166,7 @@ GhostMind checks GitHub **once at launch and every 6 hours** while running (cach
 - **Update available** → a popup shows the release notes. During the first **5 days** you can close it and keep using the current version ("Later" snoozes it for 24h).
 - **After 5 days** the popup can no longer be closed: use **Update Now** to download `GhostMind-Setup-<version>.exe` (SHA-256 verified against `SHA256SUMS.txt` before it runs) — the installer closes GhostMind; start GhostMind again when it finishes.
 - **Safety valve:** if downloads keep failing after the grace period (e.g. GitHub is unreachable), a **Continue for 24 hours** option appears — it re-locks after 24h. A machine that is fully offline is never locked out.
-- Fully automatic: no user data leaves your machine; only GitHub is contacted to check/download releases.
+- Fully automatic: update checking contacts only GitHub. Separately, **anonymous error reports** (scrubbed stack traces + app/OS version, identified only by a random local UUID) are sent to Sentry so bugs can be fixed in future releases — see **Security & ethics** to opt out.
 
 QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases URL, `file://` JSON works), `GHOSTMIND_FORCE_UPDATE=1`, `GHOSTMIND_GRACE_DAYS=0`.
 
@@ -263,7 +264,8 @@ GhostMind/
 │   ├── formatter.py        # Markdown → HTML renderer
 │   ├── hotkey_manager.py   # Global hotkeys (6 signals)
 │   ├── autostart.py        # Windows auto-start (registry)
-│   └── config_io.py        # Settings import/export (JSON)
+│   ├── config_io.py        # Settings import/export (JSON)
+│   └── error_reporter.py   # Anonymous error reporting (Sentry)
 ├── tests/
 │   ├── test_formatter.py   # 20 formatter tests
 │   ├── test_ai_engine.py   # 16 prompt routing tests
@@ -281,6 +283,8 @@ GhostMind/
 ```
 
 ## Security & ethics
+
+**Anonymous error reporting.** GhostMind sends crash/error reports to Sentry (stack traces, error messages, app version, OS/Python version) so bugs can be fixed in future updates. Reports never contain transcripts, questions, window contents, API keys, usernames, hostnames, or home-directory paths (all scrubbed before sending); each install is identified only by a random UUID stored in `config/anonymous_id.txt`. Disable anytime with the environment variable `GHOSTMIND_NO_TELEMETRY=1`. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`, `GHOSTMIND_TEST_ERROR=1`.
 
 GhostMind is built for legitimate personal productivity (e.g. private assistance during your own calls or content). **Bypassing exam proctoring, workplace policy, or consent rules is misuse.** You are responsible for compliance with laws, contracts, and platform terms.
 
