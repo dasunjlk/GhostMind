@@ -47,7 +47,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import DEFAULT_MODEL, AiStreamWorker
+from core.ai_engine import DEFAULT_MODEL, AiStreamWorker, estimate_visible_tokens
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
 from ui.answer_panel import AnswerPanel
@@ -639,9 +639,15 @@ class OverlayWindow(QMainWindow):
             return
 
         model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
+        viewport = self._answer_panel._scroll.viewport()
+        capacity = estimate_visible_tokens(
+            viewport.width(),
+            viewport.height(),
+            int(self._settings.get("font_size", 13)),
+        )
 
         self._answer_panel.begin_answer_stream()
-        worker = AiStreamWorker(content, context_type, model_id=model_id)
+        worker = AiStreamWorker(content, context_type, model_id=model_id, capacity=capacity)
         self._ai_worker = worker
 
         def _cleanup_ai() -> None:

@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 from core.ai_engine import (
+    DEFAULT_CAPACITY,
+    MAX_TOKENS,
     _classify_screen_text,
     _screen_system_addon,
     build_system_prompt,
     build_user_message,
+    estimate_visible_tokens,
+    get_token_limit_for_context,
 )
 
 
@@ -117,12 +121,89 @@ class TestNewContextPrompts:
 
 class TestTokenLimits:
     def test_meeting_question_limit(self):
-        from core.ai_engine import get_token_limit_for_context
         limit = get_token_limit_for_context("meeting_question", "test")
         assert limit <= 400
 
     def test_quiz_mcq_limit(self):
-        from core.ai_engine import get_token_limit_for_context
         limit = get_token_limit_for_context("screen", "A) one\nB) two")
         assert limit <= 500
 
+
+class TestEstimateVisibleTokens:
+    def test_default_viewport_matches_default_capacity(self):
+        # The answer viewport of the default 480x600 overlay measures 462x446.
+        assert estimate_visible_tokens(462, 446, 13) == DEFAULT_CAPACITY
+
+    def test_larger_viewport_means_more_capacity(self):
+        small = estimate_visible_tokens(460, 450, 13)
+        large = estimate_visible_tokens(900, 900, 13)
+        assert large > small
+
+    def test_smaller_font_fits_more(self):
+        assert estimate_visible_tokens(462, 446, 10) > estimate_visible_tokens(462, 446, 20)
+
+    def test_tiny_viewport_stays_positive(self):
+        assert estimate_visible_tokens(1, 1, 13) > 0
+
+
+class TestCapacityScaling:
+    def test_no_capacity_keeps_base_limits(self):
+        assert get_token_limit_for_context("screen", "hello", None) == MAX_TOKENS
+        assert get_token_limit_for_context("meeting_question", "q?", None) == 350
+
+    def test_default_capacity_keeps_base_limit(self):
+        assert get_token_limit_for_context("screen", "hello", DEFAULT_CAPACITY) == MAX_TOKENS
+
+    def test_larger_capacity_increases_limit(self):
+        base = get_token_limit_for_context("screen", "hello")
+        big = get_token_limit_for_context("screen", "hello", DEFAULT_CAPACITY * 4)
+        assert big > base
+
+    def test_smaller_capacity_decreases_limit(self):
+        base = get_token_limit_for_context("screen", "hello")
+        small = get_token_limit_for_context("screen", "hello", DEFAULT_CAPACITY // 4)
+        assert small < base
+
+    def test_limits_are_clamped(self):
+        assert get_token_limit_for_context("meeting_question", "q?", 1) == 180
+        assert get_token_limit_for_context("screen", "hello", 10**9) == 2048
+
+    def test_quiz_limit_scales_with_capacity(self):
+        assert get_token_limit_for_context("screen", "A) one\nB) two") == 450
+        quarter = get_token_limit_for_context("screen", "A) one\nB) two", DEFAULT_CAPACITY // 4)
+        assert quarter == 225
+
+
+class TestLengthHints:
+    def test_no_hint_without_capacity(self):
+        prompt = build_system_prompt("screen", "The weather is nice today")
+        assert "large display" not in prompt
+        assert "display area is small" not in prompt
+
+    def test_no_hint_at_default_capacity(self):
+        prompt = build_system_prompt("screen", "The weather is nice today", DEFAULT_CAPACITY)
+        assert "large display" not in prompt
+        assert "display area is small" not in prompt
+
+    def test_large_capacity_adds_detail_hint(self):
+        prompt = build_system_prompt("screen", "The weather is nice today", DEFAULT_CAPACITY * 2)
+        assert "large display" in prompt
+
+    def test_small_capacity_adds_compact_hint(self):
+        prompt = build_system_prompt("screen", "The weather is nice today", DEFAULT_CAPACITY // 4)
+        assert "display area is small" in prompt
+
+    def test_quiz_mcq_never_gets_hint(self):
+        text = "A) Yes\nB) No\nC) Maybe\nD) Never"
+        assert "large display" not in build_system_prompt("screen", text, DEFAULT_CAPACITY * 4)
+        assert "display area is small" not in build_system_prompt(
+            "screen", text, DEFAULT_CAPACITY // 4
+        )
+
+    def test_meeting_question_never_gets_hint(self):
+        prompt = build_system_prompt("meeting_question", "Can someone explain this?", DEFAULT_CAPACITY * 4)
+        assert "large display" not in prompt
+
+    def test_manual_gets_hint(self):
+        prompt = build_system_prompt("manual", "What is 2+2?", DEFAULT_CAPACITY * 2)
+        assert "large display" in prompt
