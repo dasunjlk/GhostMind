@@ -371,6 +371,10 @@ class OverlayWindow(QMainWindow):
             "System audio capture",
         )
         self._sys_toggle.toggled.connect(self._on_quick_capture_toggle)
+        # v1.0: listening features are hidden for the first release; the widgets
+        # stay wired for future re-enable (see future-plan.md checklist).
+        self._mic_toggle.setVisible(False)
+        self._sys_toggle.setVisible(False)
         # main.py probes audio hardware and calls set_microphone_available().
         self._has_microphone: Optional[bool] = None
 
@@ -415,6 +419,9 @@ class OverlayWindow(QMainWindow):
 
         self._tabs.addTab(self._answer_panel, "Answers")
         self._tabs.addTab(sub_host, "Subtitles")
+        # v1.0: subtitles UI hidden for the first release; code kept in full so
+        # the tab can be re-shown (see future-plan.md checklist).
+        self._tabs.setTabVisible(1, False)
         mp_lay.addWidget(self._tabs, 1)
 
         # --- Manual question input (F-01) ---
@@ -573,6 +580,10 @@ class OverlayWindow(QMainWindow):
         self._answer_panel.clear_all()
 
     def toggle_subtitles_tab(self) -> None:
+        # v1.0: subtitles tab hidden (future-plan.md checklist). Re-enabling the
+        # tab automatically restores this hotkey behavior.
+        if not self._tabs.isTabVisible(1):
+            return
         idx = 1 if self._tabs.currentIndex() == 0 else 0
         self._tabs.setCurrentIndex(idx)
 

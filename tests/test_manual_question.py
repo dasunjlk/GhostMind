@@ -122,7 +122,6 @@ class TestAskRowUI:
 
     def test_focus_question_input(self, overlay):
         overlay._stack.setCurrentIndex(1)  # settings page
-        overlay._tabs.setCurrentIndex(1)  # subtitles tab
         overlay.focus_question_input()
         assert overlay._tabs.currentIndex() == 0
         # The window's in-focus widget must be the input (independent of WM activation)
