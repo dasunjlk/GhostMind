@@ -57,7 +57,18 @@ class TestCaptureIconWidget:
         assert not w.is_on() and seen == [], "set_on is a programmatic sync, not a click"
 
 
+def _press_toggle(widget) -> None:
+    """v1.0: the toggles are hidden, so QTest clicks cannot reach them; invoke
+    the widget's click handler directly (the same code path a real click runs)."""
+    widget.mousePressEvent(None)
+
+
 class TestQuickTogglesSync:
+    def test_quick_toggles_hidden_in_v1(self, overlay):
+        """v1.0: listening toggles are hidden (future-plan.md checklist)."""
+        assert overlay._mic_toggle.isHidden()
+        assert overlay._sys_toggle.isHidden()
+
     def test_defaults_match_settings(self, overlay):
         assert overlay._mic_toggle.is_on() == bool(
             overlay._settings.get("capture_mic", True)
@@ -67,26 +78,26 @@ class TestQuickTogglesSync:
         )
 
     def test_toggling_mic_only_changes_capture_mic(self, overlay):
-        """BASE_SETTINGS starts both captures off; one click flips only mic."""
+        """BASE_SETTINGS starts both captures off; one press flips only mic."""
         assert not overlay._mic_toggle.is_on() and not overlay._sys_toggle.is_on()
-        QTest.mouseClick(overlay._mic_toggle, Qt.MouseButton.LeftButton)
+        _press_toggle(overlay._mic_toggle)
         assert overlay._settings["capture_mic"] is True
         assert overlay._settings["capture_system"] is False, "system toggle untouched"
 
     def test_both_on_then_system_off(self, overlay):
         """Both sources can run together; disabling one keeps the other."""
-        QTest.mouseClick(overlay._mic_toggle, Qt.MouseButton.LeftButton)
-        QTest.mouseClick(overlay._sys_toggle, Qt.MouseButton.LeftButton)
+        _press_toggle(overlay._mic_toggle)
+        _press_toggle(overlay._sys_toggle)
         assert (
             overlay._settings["capture_mic"] is True
             and overlay._settings["capture_system"] is True
         ), "both enabled simultaneously"
-        QTest.mouseClick(overlay._sys_toggle, Qt.MouseButton.LeftButton)
+        _press_toggle(overlay._sys_toggle)
         assert (
             overlay._settings["capture_mic"] is True
             and overlay._settings["capture_system"] is False
         ), "mic stays on while system is disabled"
-        QTest.mouseClick(overlay._mic_toggle, Qt.MouseButton.LeftButton)
+        _press_toggle(overlay._mic_toggle)
         assert (
             overlay._settings["capture_mic"] is False
             and overlay._settings["capture_system"] is False

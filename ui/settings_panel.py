@@ -103,6 +103,8 @@ class SettingsPanel(QWidget):
 
         form_gen.addRow("Click-Through:", self._click_through)
         form_gen.addRow("Subtitles on Startup:", self._subtitles_startup)
+        # v1.0: subtitles hidden (future-plan.md checklist); row kept for future.
+        form_gen.setRowVisible(self._subtitles_startup, False)
 
         # 2. Audio Tab
         tab_audio = QWidget()
@@ -151,6 +153,9 @@ class SettingsPanel(QWidget):
         form_keys.addRow("Clear Answers:", self._hk_clear)
         form_keys.addRow("Toggle Subtitles:", self._hk_sub)
         form_keys.addRow("Export Transcript:", self._hk_export)
+        # v1.0: subtitles + transcript export hidden (future-plan.md checklist).
+        form_keys.setRowVisible(self._hk_sub, False)
+        form_keys.setRowVisible(self._hk_export, False)
         form_keys.addRow("Toggle Click-Through:", self._hk_click)
         form_keys.addRow("Focus Question Box:", self._hk_ask)
 
@@ -258,6 +263,10 @@ class SettingsPanel(QWidget):
         self._tabs.addTab(tab_api, "API")
         self._tabs.addTab(tab_prefs, "Preferences")
         self._tabs.addTab(tab_about, "About")
+
+        # v1.0: the Audio tab (capture / Whisper / session mode) is hidden for the
+        # first release; its controls stay wired for re-enable (future-plan.md).
+        self._tabs.setTabVisible(self._tabs.indexOf(tab_audio), False)
 
         # Bottom Buttons
         save_btn = QPushButton("Save")
