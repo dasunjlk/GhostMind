@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import toml
 from dotenv import load_dotenv
-from PyQt6.QtCore import QObject, Qt, QTimer, QUrl
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import (
     QAction,
     QColor,
@@ -238,6 +238,28 @@ def _create_tray_icon() -> QIcon:
     return QIcon(pixmap)
 
 
+class _UpdateCheckWorker(QThread):
+    """Runs the (network) update check off the GUI thread.
+
+    check_for_update can block up to ~10s on an unreachable GitHub; doing that
+    on the GUI thread would freeze the overlay at launch and every 6h.
+    """
+
+    done = pyqtSignal(object)  # Optional[updater.UpdateCheck]
+
+    def __init__(self, local_version: str, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._local_version = local_version
+
+    def run(self) -> None:
+        try:
+            result = updater.check_for_update(self._local_version)
+        except Exception as e:
+            logger.warning("Update check failed: %s", e)
+            result = None
+        self.done.emit(result)
+
+
 class GhostMindController(QObject):
     """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
@@ -266,6 +288,8 @@ class GhostMindController(QObject):
         self._update_popup: Optional[Any] = None
         self._last_update_check: Optional[Any] = None
         self._update_locked = False
+        self._update_worker: Optional[_UpdateCheckWorker] = None
+        self._update_check_balloon = False
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
         self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
@@ -303,8 +327,10 @@ class GhostMindController(QObject):
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
 
-        # Tray actions kept as members so update-lock mode can dim them (3.5).
-        self._tray_actions = [show_action, hide_action, export_action]
+        # Tray actions hidden while the update lock is active (3.5). Transcript
+        # export is v1.0-hidden separately, so it is not part of this toggle.
+        self._tray_actions = [show_action, hide_action]
+        self._quit_action = quit_action
         self._tray_menu = tray_menu
         self._tray.messageClicked.connect(self._on_balloon_clicked)
 
@@ -552,13 +578,27 @@ class GhostMindController(QObject):
         self._run_update_check(show_balloon=True)
 
     def _run_update_check(self, show_balloon: bool = False) -> None:
-        result = updater.check_for_update(__version__)
+        """Start the update check in the background (never block the GUI)."""
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return  # 6h timer or balloon click while a check is in flight
+        worker = _UpdateCheckWorker(__version__, self)
+        self._update_worker = worker
+        self._update_check_balloon = show_balloon
+        worker.done.connect(self._on_update_check_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._on_update_worker_finished)
+        worker.start()
+
+    def _on_update_worker_finished(self) -> None:
+        self._update_worker = None
+
+    def _on_update_check_done(self, result: Any) -> None:
         if result is None:
             return  # offline / rate-limited → silently skip (never nag, never lock)
         self._last_update_check = result
         if not result.update_available:
             return
-        if show_balloon and result.first_popup_for_version:
+        if self._update_check_balloon and result.first_popup_for_version:
             self._tray.showMessage(
                 "GhostMind",
                 f"GhostMind {result.tag} available — click for details",
@@ -590,7 +630,9 @@ class GhostMindController(QObject):
         self.overlay.setEnabled(True)
         self._register_hotkeys()
         for act in self._tray_actions:
-            act.setEnabled(True)
+            act.setVisible(True)
+        if hasattr(self, "_update_tray_action"):
+            self._update_tray_action.setVisible(False)
         logger.info("Update lock lifted via safety valve (24h snooze)")
 
     def _on_update_popup_finished(self, _result: int) -> None:
@@ -611,14 +653,15 @@ class GhostMindController(QObject):
         self.overlay.setEnabled(False)
         self.hotkeys.unregister_all()
         for act in self._tray_actions:
-            act.setEnabled(False)
+            act.setVisible(False)
         if not hasattr(self, "_update_tray_action"):
-            self._tray_menu.addSeparator()
+            self._tray_menu.insertSeparator(self._quit_action)
             self._update_tray_action = QAction("Update now", self)
             self._update_tray_action.triggered.connect(
                 lambda: self._last_update_check and self._show_update_popup(self._last_update_check, locked=True)
             )
-            self._tray_menu.addAction(self._update_tray_action)
+            self._tray_menu.insertAction(self._quit_action, self._update_tray_action)
+        self._update_tray_action.setVisible(True)
         self._show_update_popup(check, locked=True)
 
     def _on_balloon_clicked(self) -> None:

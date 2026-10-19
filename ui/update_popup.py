@@ -20,6 +20,7 @@ from typing import Any, Optional
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import (
+    QApplication,
     QDialog,
     QHBoxLayout,
     QLabel,
@@ -271,6 +272,11 @@ class UpdatePopup(QDialog):
             os.startfile(self._installer_path)
             updater.record_popup(self._state_path)
             self.done(QDialog.DialogCode.Accepted)
+            # The installer must be able to replace GhostMind's files, so the
+            # app has to exit now (plan 3.7 step 4). Startup is manual after.
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
         except Exception as e:
             self._status.setText(f"● Could not start installer: {e}")
             self._status.setStyleSheet("color:#FF5555;font-size:11px;")

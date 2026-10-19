@@ -254,28 +254,36 @@ def check_for_update(
     """
     state = load_state(state_path)
     now = int(time.time()) if now is None else now
+    force = os.environ.get("GHOSTMIND_FORCE_UPDATE", "").strip() == "1"
 
     release: Optional[dict] = None
     server_now = now
-    fetched = fetch_latest_release()
-    if fetched is not None:
-        release, server_now = fetched
-        if os.environ.get("GHOSTMIND_FORCE_UPDATE", "").strip() == "1":
-            release = dict(release)
-            release["tag_name"] = "v999.0.0"
-            release.setdefault("body", "QA forced update")
-        state["last_check_epoch"] = server_now
-        # Cache only what evaluation/download needs (keeps the file small).
-        state["last_release_json"] = {
-            "tag_name": release.get("tag_name"),
-            "body": release.get("body"),
-            "assets": release.get("assets") or [],
-        }
-    elif now - int(state.get("last_check_epoch") or 0) < CHECK_INTERVAL_SEC:
-        cached = state.get("last_release_json")
-        if isinstance(cached, dict) and cached.get("tag_name"):
-            release = cached
-            server_now = now  # no fresh server Date; local time is close enough
+    cached = state.get("last_release_json")
+    within_window = now - int(state.get("last_check_epoch") or 0) < CHECK_INTERVAL_SEC
+    if (
+        within_window
+        and not force  # QA override must bypass the cache
+        and isinstance(cached, dict)
+        and cached.get("tag_name")
+    ):
+        # Never contact GitHub more than once per 6h window, even across
+        # restarts (plan 3.1). Local time is close enough for a cached release.
+        release = cached
+    else:
+        fetched = fetch_latest_release()
+        if fetched is not None:
+            release, server_now = fetched
+            if force:
+                release = dict(release)
+                release["tag_name"] = "v999.0.0"
+                release.setdefault("body", "QA forced update")
+            state["last_check_epoch"] = server_now
+            # Cache only what evaluation/download needs (keeps the file small).
+            state["last_release_json"] = {
+                "tag_name": release.get("tag_name"),
+                "body": release.get("body"),
+                "assets": release.get("assets") or [],
+            }
 
     if release is None:
         return None  # offline / rate-limited / bad payload → never nag, never lock

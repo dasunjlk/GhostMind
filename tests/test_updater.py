@@ -277,6 +277,45 @@ class TestStatePersistence:
         assert out3 is None
         assert calls["n"] == 1
 
+    def test_no_fetch_within_6h_even_when_online(self, tmp_path, monkeypatch):
+        """Plan 3.1: at most one GitHub contact per 6h window, restarts included."""
+        path = tmp_path / "s.json"
+        calls = {"n": 0}
+
+        def fake_fetch(timeout=10.0):
+            calls["n"] += 1
+            return (_release("1.1.0"), 5000)
+
+        monkeypatch.setattr(updater, "fetch_latest_release", fake_fetch)
+        first = updater.check_for_update("1.0.0", state_path=path, now=1000)
+        assert first is not None and first.update_available
+
+        # Network is up, but a restart 1h later must reuse the cache.
+        second = updater.check_for_update("1.0.0", state_path=path, now=4600)
+        assert second is not None and second.tag == "1.1.0"
+        assert calls["n"] == 1, "restart within the 6h window must not re-contact GitHub"
+
+        # Past the window → a fresh fetch is allowed again.
+        third = updater.check_for_update("1.0.0", state_path=path, now=5000 + 7 * 3600)
+        assert third is not None and third.update_available
+        assert calls["n"] == 2
+
+    def test_force_update_bypasses_cache(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("GHOSTMIND_FORCE_UPDATE", "1")
+        path = tmp_path / "s.json"
+        calls = {"n": 0}
+
+        def fake_fetch(timeout=10.0):
+            calls["n"] += 1
+            return (_release("1.1.0"), 5000)
+
+        monkeypatch.setattr(updater, "fetch_latest_release", fake_fetch)
+        updater.check_for_update("1.0.0", state_path=path, now=1000)
+        # Within the window, but QA force must still fetch.
+        out = updater.check_for_update("1.0.0", state_path=path, now=2000)
+        assert out is not None and out.tag == "999.0.0"
+        assert calls["n"] == 2
+
 
 # --------------------------------------------------------------------------- #
 # Popup/snooze bookkeeping

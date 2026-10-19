@@ -3,12 +3,17 @@
 ; Output: dist/GhostMind-Setup-<version>.exe
 
 #define MyAppName "GhostMind"
+#ifndef MyAppVersion
 #define MyAppVersion "1.0.0"
+#endif
 #define MyAppPublisher "Dasun Jayasanka"
 #define MyAppURL "https://github.com/dasunjlk/GhostMind"
 #define MyAppExeName "ghostmind.exe"
 
 [Setup]
+; Relative paths (dist\, assets\, LICENSE, ...) resolve from the repo root,
+; one level above this installer\ directory.
+SourceDir=..
 ; Application information
 AppId={{8E9A7D5C-3F2B-4E1A-9C8D-7F6E5A4B3C2D}
 AppName={*#MyAppName}
@@ -33,8 +38,8 @@ OutputBaseFilename=GhostMind-Setup-{*#MyAppVersion}
 SetupIconFile=assets\icon.ico
 ; Compression
 Compression=lzma2/ultra64
-; Disable running the app after install (user starts it manually)
-CloseApplications=no
+; Ask Windows to close a running GhostMind before replacing files.
+CloseApplications=yes
 ; Keep install directory editable
 DisableProgramGroupPage=yes
 ; Uninstaller settings
@@ -45,7 +50,7 @@ UninstallDisplaySize=50
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Startup:"; Flags: unchecked
 
 [Files]
@@ -77,8 +82,10 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\ghostmind.exe"; Description: "Launch GhostMind now"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Remove app directory on uninstall, but keep config/ and logs
-Type: filesandordirs; Name: "{app}"
+; Inno removes the files it installed. Runtime data created by the app
+; (config/settings.toml, config/update_state.json, ghostmind.log) is
+; intentionally left behind per the release plan (R-01), so do NOT blanket
+; delete {app} here.
 
 [Code]
 function InitializeSetup(): Boolean;

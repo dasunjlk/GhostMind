@@ -163,13 +163,10 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
     [],
+    exclude_binaries=True,  # ONEDIR: payload lives in _internal, exe stays small
     name='ghostmind',
     debug=False,
-    bootloaderignore=True,
     strip=False,
     upx=True,
     upx_exclude=[
@@ -179,7 +176,6 @@ exe = EXE(
         'libiomp5md.dll',
         'opencv_videoio_ffmpeg*.dll',
     ],
-    runtime_tmpdir=None,
     console=False,  # GUI app — no console window.
     disable_window_compat_redirection=False,
     target_arch=None,

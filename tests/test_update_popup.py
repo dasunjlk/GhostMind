@@ -115,3 +115,34 @@ class TestSafetyValve:
         assert until - before >= 23 * 3600  # ~24h unlock
         assert "reset_attempts" in spies
         assert popup.result() == QDialog.DialogCode.Accepted.value
+
+
+class TestInstallerLaunch:
+    def test_startfile_quits_app(self, qapp, monkeypatch, tmp_path):
+        """U-01 3.7: the installer needs GhostMind to exit before replacing files."""
+        import ui.update_popup as popup_mod
+
+        launched: List[str] = []
+        monkeypatch.setattr(
+            popup_mod.os, "startfile", lambda path: launched.append(path), raising=False
+        )
+
+        quit_calls: List[bool] = []
+
+        class FakeApp:
+            def quit(self):
+                quit_calls.append(True)
+
+        fake_qapp = type(
+            "FakeQApplication",
+            (),
+            {"instance": staticmethod(lambda: FakeApp())},
+        )
+        monkeypatch.setattr(popup_mod, "QApplication", fake_qapp)
+
+        popup = UpdatePopup(_check(locked=True), locked=True, state_path=tmp_path / "s.json")
+        popup._installer_path = str(tmp_path / "GhostMind-Setup-1.1.0.exe")
+        popup._run_installer()
+
+        assert launched == [popup._installer_path]
+        assert quit_calls == [True], "app must quit so Inno Setup can replace files"
