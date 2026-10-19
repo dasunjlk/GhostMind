@@ -134,9 +134,10 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "font_size": 13,
     "click_through": False,
     "dwm_cloak": False,
-    "subtitles_enabled": True,
-    "capture_mic": True,
-    "capture_system": True,
+    # v1.0: listening features hidden (future-plan.md hidden-features checklist)
+    "subtitles_enabled": False,
+    "capture_mic": False,
+    "capture_system": False,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
     # User-added model IDs from the "＋ Add custom model…" flow (API tab)
@@ -288,6 +289,8 @@ class GhostMindController(QObject):
 
         export_action = QAction("Export transcript", self)
         export_action.triggered.connect(self.export_transcript)
+        # v1.0: transcript export hidden (future-plan.md checklist).
+        export_action.setVisible(False)
         tray_menu.addAction(export_action)
 
         tray_menu.addSeparator()
@@ -316,8 +319,10 @@ class GhostMindController(QObject):
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
         self.hotkeys.clear_answers.connect(self.overlay.clear_answers)
-        self.hotkeys.toggle_subtitles.connect(self.overlay.toggle_subtitles_tab)
-        self.hotkeys.export_transcript.connect(self.export_transcript)
+        # v1.0: subtitles + transcript export hidden (future-plan.md checklist);
+        # uncomment to rewire.
+        # self.hotkeys.toggle_subtitles.connect(self.overlay.toggle_subtitles_tab)
+        # self.hotkeys.export_transcript.connect(self.export_transcript)
         self.overlay.export_requested.connect(self.export_transcript)
         self.hotkeys.toggle_click_through.connect(self._toggle_click_through)
         self.hotkeys.ask_question.connect(self.overlay.focus_question_input)
@@ -354,6 +359,9 @@ class GhostMindController(QObject):
         save_settings(self.settings)
 
     def _start_audio_if_needed(self) -> None:
+        # v1.0: mic/system listening is not part of the first release. Remove this
+        # guard to re-enable (see future-plan.md hidden-features checklist).
+        return
         if self._audio is not None:
             self._audio.stop_listening()
             self._audio = None

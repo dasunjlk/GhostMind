@@ -62,6 +62,11 @@ class _AnswerBlock(QWidget):
         super().__init__(parent)
         self._raw_markdown = ""
         self._font_pt = int(font_pt)
+        self._measured_width = 0
+        self._reflow_timer = QTimer(self)
+        self._reflow_timer.setSingleShot(True)
+        self._reflow_timer.setInterval(60)
+        self._reflow_timer.timeout.connect(self._recompute_height)
         self._text = QTextEdit()
         self._text.setReadOnly(True)
         self._text.setFrameShape(QFrame.Shape.NoFrame)
@@ -101,18 +106,33 @@ class _AnswerBlock(QWidget):
         self._copy_btn.setText("Copied!")
         QTimer.singleShot(1500, lambda: self._copy_btn.setText("Copy"))
 
+    def _recompute_height(self) -> None:
+        """Re-measure the wrapped document at the current text width.
+
+        Never caps the height: the outer panel scrolls, so long answers must
+        grow to their full height instead of being clipped.
+        """
+        width = self._text.viewport().width()
+        if width <= 0:
+            return
+        self._measured_width = width
+        h = int(self._text.document().size().height()) + 24
+        self._text.setMinimumHeight(max(h, 60))
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        if self._text.viewport().width() != self._measured_width:
+            self._reflow_timer.start()
+
     def set_html(self, html: str) -> None:
         self._text.setHtml(html)
-        self._text.document().adjustSize()
-        h = int(self._text.document().size().height()) + 24
-        self._text.setMinimumHeight(min(max(h, 60), 1400))
+        self._recompute_height()
 
     def set_streaming_plain(self, text: str) -> None:
         self._raw_markdown = text
         self._text.setPlainText(text)
         self._text.moveCursor(QTextCursor.MoveOperation.End)
-        doc_h = int(self._text.document().size().height()) + 24
-        self._text.setMinimumHeight(min(max(doc_h, 50), 1400))
+        self._recompute_height()
 
     def finalize_markdown(self, md: str) -> None:
         self._raw_markdown = md
@@ -124,6 +144,7 @@ class _AnswerBlock(QWidget):
             f"QTextEdit {{ background: transparent; color: #E0E0E0; "
             f"border: 1px solid #1E3A2B; border-radius: 6px; font-size: {self._font_pt}px; }}"
         )
+        self._reflow_timer.start()
 
 
 class AnswerPanel(QWidget):

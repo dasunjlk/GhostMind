@@ -46,11 +46,55 @@ ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
 
 MAX_TOKENS = 1024
 
+# Approximate visible tokens in the answer viewport of the default 480x600
+# overlay at the default font (462x446 viewport -> 250). Used to scale answer
+# length with the window size (see estimate_visible_tokens).
+DEFAULT_CAPACITY = 250
+_MIN_CAPACITY_FACTOR = 0.5
+_MAX_CAPACITY_FACTOR = 2.0
+
 BASE_SYSTEM = (
     "You are GhostMind, a silent stealth AI assistant. Respond concisely, accurately, and clearly. "
     "Get straight to the answer without conversational preamble (e.g. no 'Sure!', 'Here is', 'Certainly'). "
     "Use bullet points for lists, numbered steps for procedures, and code blocks with language tags for code."
 )
+
+
+def estimate_visible_tokens(width_px: int, height_px: int, font_pt: int) -> int:
+    """Approximate how many tokens the answer viewport can show at once.
+
+    Rough model: line height ~= 1.6 x font size, ~4 characters per token, and
+    ~90px of chrome (header, buttons) that never displays answer text.
+    """
+    pt = max(8, int(font_pt))
+    line_h = pt * 1.6
+    usable_h = max(0.0, float(height_px) - 90.0)
+    lines = max(3, int(usable_h / line_h))
+    chars_per_line = max(24, int(int(width_px) / (pt * 0.6)))
+    return int(lines * chars_per_line / 4)
+
+
+def _capacity_factor(capacity: Optional[int]) -> float:
+    """Map visible capacity to a 0.5x-2x multiplier around the default size."""
+    if capacity is None or capacity <= 0:
+        return 1.0
+    return max(_MIN_CAPACITY_FACTOR, min(_MAX_CAPACITY_FACTOR, capacity / DEFAULT_CAPACITY))
+
+
+def _length_hint(capacity: Optional[int]) -> str:
+    """Prompt addendum telling the model how much room the overlay has."""
+    factor = _capacity_factor(capacity)
+    if factor >= 1.5:
+        return (
+            " The user has a large display: provide a well-developed answer - add useful "
+            "detail, steps, or examples when relevant - while following the rules above."
+        )
+    if factor <= 0.75:
+        return (
+            " The display area is small: keep the answer as compact as possible "
+            "while remaining complete."
+        )
+    return ""
 
 
 def _classify_screen_text(content: str) -> str:
@@ -125,18 +169,26 @@ def _meeting_question_system_block() -> str:
     )
 
 
-def build_system_prompt(context_type: str, content: str) -> str:
+def build_system_prompt(
+    context_type: str,
+    content: str,
+    capacity: Optional[int] = None,
+) -> str:
     if context_type == "manual":
         # Typed question (F-01): plain system prompt, no screen/meeting framing.
-        return BASE_SYSTEM
+        return BASE_SYSTEM + _length_hint(capacity)
     if context_type == "meeting_audio":
-        return _meeting_system_block()
+        return _meeting_system_block() + _length_hint(capacity)
     if context_type == "meeting_question":
+        # Strict 1-3 sentence format: never hint for longer answers.
         return _meeting_question_system_block()
     if context_type in ("lecture_notes", "lecture_audio"):
-        return _lecture_system_block()
+        return _lecture_system_block() + _length_hint(capacity)
     kind = _classify_screen_text(content)
-    return BASE_SYSTEM + _screen_system_addon(kind)
+    prompt = BASE_SYSTEM + _screen_system_addon(kind)
+    if kind != "quiz_mcq":
+        prompt += _length_hint(capacity)
+    return prompt
 
 
 def build_user_message(context_type: str, content: str) -> str:
@@ -233,28 +285,41 @@ def _get_client() -> Groq:
     return Groq(api_key=key)
 
 
-def get_token_limit_for_context(context_type: str, content: str) -> int:
-    """Choose optimal max_tokens to minimize latency."""
+def get_token_limit_for_context(
+    context_type: str,
+    content: str,
+    capacity: Optional[int] = None,
+) -> int:
+    """Choose optimal max_tokens to minimize latency.
+
+    `capacity` is the estimated visible tokens in the answer viewport; when
+    given, the per-context base limit scales by 0.5x-2x with it.
+    """
     if context_type == "meeting_question":
-        return 350
-    kind = _classify_screen_text(content)
-    if kind == "quiz_mcq":
-        return 450
-    if context_type in ("lecture_notes", "lecture_audio", "meeting_summary"):
-        return 1200
-    return MAX_TOKENS
+        base = 350
+    else:
+        kind = _classify_screen_text(content)
+        if kind == "quiz_mcq":
+            base = 450
+        elif context_type in ("lecture_notes", "lecture_audio", "meeting_summary"):
+            base = 1200
+        else:
+            base = MAX_TOKENS
+    limit = int(base * _capacity_factor(capacity))
+    return max(max(180, base // 2), min(2048, limit))
 
 
 async def generate_answer(
     content: str,
     context_type: str = "screen",
     model_id: Optional[str] = None,
+    capacity: Optional[int] = None,
 ) -> str:
     """Async API call (non-streaming); used for tests or direct await."""
     client = _get_client()
-    system = build_system_prompt(context_type, content)
+    system = build_system_prompt(context_type, content, capacity)
     user_msg = build_user_message(context_type, content)
-    max_tokens = get_token_limit_for_context(context_type, content)
+    max_tokens = get_token_limit_for_context(context_type, content, capacity)
     primary = model_id or MODEL_ID
     models_to_try = [primary] + [m for m in BACKUP_MODELS if m != primary]
     last_err: Optional[Exception] = None
@@ -324,12 +389,14 @@ class AiStreamWorker(QThread):
         content: str,
         context_type: str,
         model_id: Optional[str] = None,
+        capacity: Optional[int] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._content = content
         self._context_type = context_type
         self._model_id = model_id or MODEL_ID
+        self._capacity = capacity
 
     def run(self) -> None:
         try:
@@ -338,13 +405,13 @@ class AiStreamWorker(QThread):
             self.failed.emit(str(e))
             return
 
-        system = build_system_prompt(self._context_type, self._content)
+        system = build_system_prompt(self._context_type, self._content, self._capacity)
         user_msg = build_user_message(self._context_type, self._content)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ]
-        max_tokens = get_token_limit_for_context(self._context_type, self._content)
+        max_tokens = get_token_limit_for_context(self._context_type, self._content, self._capacity)
 
         models_to_try = [self._model_id] + [m for m in BACKUP_MODELS if m != self._model_id]
         last_err: Optional[Exception] = None

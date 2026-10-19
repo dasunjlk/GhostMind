@@ -609,6 +609,38 @@ Currently untested (add tests/ files):
 
 ---
 
+## V1.0 HIDDEN FEATURES — RE-ENABLE CHECKLIST
+
+The first release ships screen-scan + manual questions only. Listening (mic /
+system capture, Whisper subtitles) and transcript export are **hidden, not
+deleted**: widgets, signals, and code paths all remain in place. This is the
+exact unwiring applied for v1.0 and the one-line change to re-enable each item.
+
+| Hidden surface | Where it was unwired | To re-enable |
+| --- | --- | --- |
+| Header mic / speaker quick toggles | `ui/overlay_window.py` — `setVisible(False)` after the `_mic_toggle` / `_sys_toggle` creation | Delete the two `setVisible(False)` lines |
+| Overlay "Subtitles" tab | `ui/overlay_window.py` — `self._tabs.setTabVisible(1, False)` after `addTab(sub_host, "Subtitles")` | Delete that line |
+| `Ctrl+Shift+T` toggle-subtitles | `ui/overlay_window.py` — guard `if not self._tabs.isTabVisible(1): return` in `toggle_subtitles_tab()`, connect commented in `main.py` | Uncomment the connect; the guard restores itself when the tab is visible again |
+| Settings → General "Subtitles on Startup" | `ui/settings_panel.py` — `form_gen.setRowVisible(self._subtitles_startup, False)` | Delete that line |
+| Settings → Audio tab (Audio Mode, Capture Mic/System, Loopback Device, Whisper Model) | `ui/settings_panel.py` — `self._tabs.setTabVisible(indexOf(tab_audio), False)` | Delete that line |
+| Settings → Shortcuts "Toggle Subtitles" / "Export Transcript" | `ui/settings_panel.py` — `form_keys.setRowVisible(self._hk_sub / self._hk_export, False)` | Delete those lines |
+| Tray "Export transcript" | `main.py` — `export_action.setVisible(False)` | Delete that line |
+| `Ctrl+Shift+E` export transcript | `main.py` — connect line commented out under a `# v1.0:` note | Uncomment the connect |
+| Mic/system audio capture start | `main.py` — early `return` at the top of `_start_audio_if_needed()` | Delete the guard `return` |
+| Default capture flags | `main.py` — `DEFAULT_SETTINGS["subtitles_enabled" / "capture_mic" / "capture_system"] = False` | Flip back to `True` (or leave as opt-in default) |
+
+Notes:
+
+- `Ctrl+Shift+T` / `Ctrl+Shift+E` remain registered by `HotkeyManager` but are
+  inert; `suppress=False` means those combos are not stolen from other apps.
+- Untouched code: `ui/subtitle_bar.py`, `core/audio_listener.py`,
+  `_CaptureIconWidget`, `_summarize_meeting`, `export_transcript`, and all of
+  their tests (`tests/test_capture_toggles.py`, `tests/test_mic_badge.py`,
+  `tests/test_features.py`).
+- The overlay tab bar now shows a single "Answers" tab.
+
+---
+
 ## OUT OF SCOPE / BACKLOG (NOT PLANNED)
 
 - macOS/Linux support (Win32 stealth is the product's core identity).
@@ -620,3 +652,6 @@ Currently untested (add tests/ files):
 ## CHANGELOG OF THIS PLAN
 
 - **2026-09-12 v1.0** — Initial plan: 24 features across 4 tiers.
+- **2026-10-19 v1.1** — V1.0 hidden-features checklist: listening toggles,
+  Subtitles tab, Audio settings, transcript export, and audio auto-start
+  unwired (hidden, not deleted) on `fix/unnecessary-options`.
