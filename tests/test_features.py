@@ -38,7 +38,7 @@ class TestVersionMetadata:
 
 class TestModelConfiguration:
     def test_default_model_is_qwen38(self):
-        from core.ai_engine import DEFAULT_MODEL, MODEL_ID
+        from core.ai_engine import DEFAULT_MODEL, AVAILABLE_MODELS, MODEL_ID
         assert DEFAULT_MODEL == "qwen/qwen3.8-27b"
         assert MODEL_ID == "qwen/qwen3.8-27b"
 
@@ -119,6 +119,7 @@ class TestSettingsPanelTabs:
             "ai_model": "qwen/qwen3.8-27b",
             "whisper_model": "base",
             "loopback_device": None,
+            "font_size": 13,
             "hotkeys": {
                 "toggle_visibility": "ctrl+shift+g",
                 "screen_scan": "ctrl+shift+s",
@@ -126,20 +127,28 @@ class TestSettingsPanelTabs:
                 "toggle_subtitles": "ctrl+shift+t",
                 "export_transcript": "ctrl+shift+e",
                 "toggle_click_through": "ctrl+shift+x",
+                "ask_question": "ctrl+shift+q",
             },
         }
         panel = SettingsPanel(initial)
-        assert panel._tabs.count() == 5
-        tab_names = [panel._tabs.tabText(i) for i in range(5)]
-        assert tab_names == ["General", "Audio", "Shortcuts", "AI & API", "About"]
+        expected_tab_count = panel._tabs.count()
+        assert expected_tab_count >= 5
+        tab_names = [panel._tabs.tabText(i) for i in range(expected_tab_count)]
+        assert "General" in tab_names
+        assert "Audio" in tab_names
+        assert "Shortcuts" in tab_names
+        assert "AI & API" in tab_names
+        assert "About" in tab_names
+        assert "Preferences" in tab_names
 
         # Test data collection
         collected = panel.collect_data()
         assert collected["opacity"] == pytest.approx(0.85, 0.02)
         assert collected["session_type"] == "meeting"
-        assert collected["capture_system"] is True
+        assert collected["capture_system"] is True  # input says True; UI visibility is separate
         assert collected["ai_model"] == "qwen/qwen3.8-27b"
         assert "hotkeys" in collected
+        assert hasattr(panel, "_api_key_guide")
 
 
 

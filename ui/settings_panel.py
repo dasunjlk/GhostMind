@@ -8,8 +8,8 @@ import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal, QTimer, QPoint, pyqtSlot
+from PyQt6.QtGui import QDesktopServices, QPainter, QColor, QPen
 from PyQt6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -26,6 +26,82 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+
+from core.ai_engine import AVAILABLE_MODELS, DEFAULT_MODEL
+
+
+class _ApiKeyGuide(QWidget):
+    """Small arrow-anchored hint near the API key row.
+
+    It uses the same modern look as the Settings-button onboarding hint.
+    It does not block the row; it sits to the right of the key input.
+    """
+
+    shown = pyqtSignal()
+    dismissed = pyqtSignal()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFixedSize(220, 0)  # height set per message
+        self._arrow_size = 12
+        self._visible = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        self._arrow = QLabel()
+        self._arrow.setFixedSize(self._arrow_size, self._arrow_size)
+        self._arrow.setStyleSheet(
+            "background:#00FF88; border-radius:3px;"
+        )
+        lay.addWidget(self._arrow, 0, Qt.AlignmentFlag.AlignLeft)
+
+        self._body = QLabel("", alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._body.setStyleSheet(
+            "color:#E0E0E0; background:#222; border:1px solid #00FF88; border-radius:6px;"
+            " padding:8px 10px; font-size:11px;"
+        )
+        self._body.setWordWrap(True)
+        lay.addWidget(self._body, 0, Qt.AlignmentFlag.AlignLeft)
+
+        close_row = QHBoxLayout()
+        close_row.setContentsMargins(0, 0, 0, 0)
+        close_row.addStretch(1)
+        btn_close = QPushButton("×")
+        btn_close.setFixedSize(16, 16)
+        btn_close.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_close.setStyleSheet(
+            "QPushButton { color:#888; background:#222; border:none; font-size:13px; }"
+            "QPushButton:hover { color:#00FF88; background:#333; }"
+        )
+        btn_close.clicked.connect(self._dismiss)
+        close_row.addWidget(btn_close)
+        lay.addLayout(close_row)
+
+    def _dismiss(self) -> None:
+        self.hide_guide()
+        self.dismissed.emit()
+
+    def set_message(self, text: str, caption: str = "Click here") -> None:
+        self._body.setText(f"<b>{caption}</b> — {text}")
+        hint_height = self._body.fontMetrics().boundingRect(text).height() + 46
+        self.setFixedHeight(max(50, hint_height))
+
+    def show_guide(self) -> None:
+        if not self._visible:
+            self._visible = True
+            self.show()
+            self.raise_()
+            self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+
+    def hide_guide(self) -> None:
+        if self._visible:
+            self._visible = False
+            self.hide()
+
+
+
 
 from core.ai_engine import AVAILABLE_MODELS, DEFAULT_MODEL
 from core.audio_listener import get_input_devices
@@ -176,9 +252,17 @@ class SettingsPanel(QWidget):
         )
         test_btn.clicked.connect(self._on_test_api)
 
+        self._api_key_guide = _ApiKeyGuide(self)
+        self._api_key_guide.set_message(
+            "Click here to add key. Paste a free Groq key and Save — the app checks the key and model for you.",
+            caption="Click here to add key",
+        )
+
         form_api.addRow("AI Model:", self._ai_model)
         form_api.addRow("Groq API Key:", self._api_key)
         form_api.addRow("", test_btn)
+        form_api.addRow("", self._api_key_guide)
+
 
         # 5. About Tab
         tab_about = QWidget()
@@ -222,6 +306,15 @@ class SettingsPanel(QWidget):
         self._tabs.addTab(tab_keys, "Shortcuts")
         self._tabs.addTab(tab_api, "AI & API")
         self._tabs.addTab(tab_about, "About")
+
+        # 6. Preferences Tab
+        tab_prefs = QWidget()
+        prefs_lay = QVBoxLayout(tab_prefs)
+        prefs_lay.setContentsMargins(10, 12, 10, 12)
+        prefs_lay.setSpacing(8)
+        prefs_lay.addWidget(QLabel("More appearance options coming in future updates."))
+
+        self._tabs.addTab(tab_prefs, "Preferences")
 
         # Bottom Buttons
         save_btn = QPushButton("Save")
