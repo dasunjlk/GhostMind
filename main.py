@@ -39,7 +39,7 @@ from core.ai_engine import DEFAULT_MODEL
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
-from utils import updater
+from utils import error_reporter, updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
 
@@ -643,6 +643,10 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("GhostMind")
 
+    # Anonymous error reporting (Sentry). No-op until a DSN is configured;
+    # fully disabled by GHOSTMIND_NO_TELEMETRY=1.
+    error_reporter.install(REPO_ROOT)
+
     # Default UI font: prefer the branded faces when installed, else Segoe UI.
     # (Individual widgets may still set their own; this is the app-wide base.)
     _fam = {f.lower() for f in QFontDatabase.families()}
@@ -702,6 +706,7 @@ def main() -> int:
     timer.start(400)
 
     app.aboutToQuit.connect(ctrl.hotkeys.unregister_all)
+    app.aboutToQuit.connect(error_reporter.flush)
 
     ctrl.overlay.show()
     try:

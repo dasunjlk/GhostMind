@@ -40,6 +40,7 @@ _hidden_ctranslate2, _data_ctranslate2, _hidden_ctranslate2_deps = collect_all('
 _hidden_pytesseract, _data_pytesseract, _hidden_pytesseract_deps = collect_all('pytesseract')
 _hidden_cv2, _data_cv2, _hidden_cv2_deps = collect_all('cv2')
 _hidden_numpy, _data_numpy, _hidden_numpy_deps = collect_all('numpy')
+_hidden_sentry, _data_sentry, _hidden_sentry_deps = collect_all('sentry_sdk')
 
 # Combine all hidden imports.
 _hiddenimports = (
@@ -49,6 +50,7 @@ _hiddenimports = (
     + _hidden_pytesseract_deps
     + _hidden_cv2_deps
     + _hidden_numpy_deps
+    + _hidden_sentry_deps
     # Modules not covered by collect_all (single-file modules or C extensions).
     + [
         'win32gui',     # C extension (.pyd) — used in screen_reader + stealth.
@@ -80,7 +82,7 @@ _datas = [
 # collect_all already collected most; we add win32 modules manually.
 # ---------------------------------------------------------------------------
 
-_binaries = _data_keyboard + _data_faster_whisper + _data_ctranslate2 + _data_pytesseract + _data_cv2 + _data_numpy
+_binaries = _data_keyboard + _data_faster_whisper + _data_ctranslate2 + _data_pytesseract + _data_cv2 + _data_numpy + _data_sentry
 
 # Add win32 binaries (pywin32 C extensions).
 import os
