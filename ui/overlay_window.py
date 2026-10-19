@@ -122,9 +122,9 @@ class _RoundCtl(QPushButton):
 
 
 class _CaptureIconWidget(QWidget):
-    """Zoom-style capture toggle: drawn mic/speaker glyph, red slash when off.
+    """Zoom-style header toggle: drawn mic/speaker/pointer glyph, red slash when off.
 
-    Click toggles; the app state lives in the capture settings that callers sync.
+    Click toggles; the app state lives in the settings that callers sync.
     """
 
     toggled = pyqtSignal(bool)
@@ -200,7 +200,7 @@ class _CaptureIconWidget(QWidget):
             p.drawArc(QRectF(x - 3.5, y + 2.0, w + 7.0, h + 2.0), -60 * 16, 120 * 16 - 1)
             p.drawLine(QPointF(cx, y + h + 0.5), QPointF(cx, bottom_edge - 3.0))
             p.drawLine(QPointF(cx - 3.0, bottom_edge - 3.0), QPointF(cx + 3.0, bottom_edge - 3.0))
-        else:  # "speaker"
+        elif self._kind == "speaker":
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(color)
             box_w, box_h = 6.0, 8.0
@@ -222,6 +222,25 @@ class _CaptureIconWidget(QWidget):
             p.setPen(pen)
             for ax in (bx + box_w, bx + box_w + 3.0):
                 p.drawArc(QRectF(ax, r.height() / 2.0 - 5.5, 5.0, 11.0), -55 * 16, 110 * 16 - 1)
+        else:  # "pointer"
+            # Mouse-pointer arrow, from a 9x13.5 cell centered in the widget
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            ax = cx - 4.6
+            ay = (r.height() - 13.5) / 2.0
+            p.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(ax, ay),
+                        QPointF(ax, ay + 12.0),
+                        QPointF(ax + 3.2, ay + 9.2),
+                        QPointF(ax + 5.0, ay + 13.5),
+                        QPointF(ax + 7.2, ay + 12.6),
+                        QPointF(ax + 5.4, ay + 8.4),
+                        QPointF(ax + 9.2, ay + 8.0),
+                    ]
+                )
+            )
 
         if self._kind == "mic" and not self._has_device:
             # Zoom-style amber "!" badge: no input hardware on this system
@@ -255,6 +274,7 @@ def _is_worker_active(worker: Optional[QThread]) -> bool:
 
 class OverlayWindow(QMainWindow):
     settings_changed = pyqtSignal(dict)
+    click_through_changed = pyqtSignal(bool)
     geometry_changed = pyqtSignal(dict)
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
@@ -394,6 +414,15 @@ class OverlayWindow(QMainWindow):
         # main.py probes audio hardware and calls set_microphone_available().
         self._has_microphone: Optional[bool] = None
 
+        # Click-through toggle (v1.0): flip pass-through clicks from the header
+        # without opening Settings; same action as the Ctrl+Shift+X hotkey.
+        self._click_through_toggle = _CaptureIconWidget(
+            "pointer",
+            bool(self._settings.get("click_through", False)),
+            "Click-through (Ctrl+Shift+X)",
+        )
+        self._click_through_toggle.toggled.connect(self._on_click_through_toggle)
+
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
         hl.addSpacing(8)
@@ -404,6 +433,8 @@ class OverlayWindow(QMainWindow):
         hl.addWidget(self._mic_toggle)
         hl.addSpacing(2)
         hl.addWidget(self._sys_toggle)
+        hl.addSpacing(2)
+        hl.addWidget(self._click_through_toggle)
         hl.addSpacing(4)
         hl.addWidget(btn_set)
 
@@ -498,6 +529,7 @@ class OverlayWindow(QMainWindow):
         self._settings_panel.apply_data(self._settings)
         self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
         self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
+        self._click_through_toggle.set_on(bool(self._settings.get("click_through", False)))
         self.apply_font_size(int(self._settings.get("font_size", 13)))
         self._reapply_stealth()
 
@@ -520,6 +552,17 @@ class OverlayWindow(QMainWindow):
         self._settings["capture_mic"] = self._mic_toggle.is_on()
         self._settings["capture_system"] = self._sys_toggle.is_on()
         self.settings_changed.emit(dict(self._settings))
+
+    def _on_click_through_toggle(self, on: bool) -> None:
+        """Header pointer icon changed: apply immediately and persist.
+
+        Uses a dedicated signal (not settings_changed) so main.py can save the
+        setting without restarting audio capture.
+        """
+        self._settings["click_through"] = bool(on)
+        self._settings_panel.set_click_through(bool(on))
+        self._reapply_stealth()
+        self.click_through_changed.emit(bool(on))
 
     def set_microphone_available(self, available: bool) -> None:
         """Show an amber "!" on the mic icon when the system has no input device."""

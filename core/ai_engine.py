@@ -97,19 +97,74 @@ def _length_hint(capacity: Optional[int]) -> str:
     return ""
 
 
+# Unambiguous quiz wording. Deliberately narrow: generic "select one" also
+# appears in essay prompts such as "Select one of the following topics...".
+_MCQ_PHRASE_RE = re.compile(
+    r"multiple[\s-]+choice"
+    r"|choose\s+(the\s+)?(correct|best)\b"
+    r"|select\s+(the\s+)?(correct|best)\b"
+)
+
+# Essay / long-answer instructions. These must be checked before option
+# structure because essay prompts commonly use (a), (b), ... sub-questions.
+_ESSAY_PATTERN_RE = re.compile(
+    r"\bessay\b"
+    r"|\blong[\s-]+answer\b"
+    r"|\bdescriptive\b"
+    r"|\bwrite\b.{0,40}\b(essay|paragraph|report|article|note)\b"
+    r"|\bdiscuss\b"
+    r"|\belaborate\b"
+    r"|\bcompare\s+and\s+contrast\b"
+    r"|\bcritically\s+(analy[sz]e|examine|evaluate)\b"
+    r"|\b(explain|describe)\s+in\s+detail\b"
+    r"|\bin\s+detail\b"
+    r"|\b\d+\s*[-–]?\s*\d*\s*words\b"
+    r"|\bword\s+limit\b"
+    r"|\b\d+\s*marks\b"
+    r"|\banswer\s+(the\s+following\s+)?(in|any)\b"
+    r"|\bjustify\b"
+    r"|\bsubstantiate\b"
+    r"|\bevaluate\b"
+)
+
+# Lettered option on its own line: "A) text", "(b) text", "C. text", "d: text".
+_MCQ_OPTION_LINE_RE = re.compile(r"(?m)^\s*[\(\[]?([a-dA-D])[\)\].:]\s+(\S.*)$")
+# Same markers inline, e.g. "Which ...? A) 1 B) 2 C) 3 D) 4".
+_MCQ_INLINE_OPTION_RE = re.compile(r"(?:^|[\s;])[\(\[]?([a-dA-D])[\)\].:]\s+\S")
+
+
+def _count_mcq_options(content: str) -> int:
+    """Count distinct lettered options that look like answer choices."""
+    letters = set()
+    for match in _MCQ_OPTION_LINE_RE.finditer(content):
+        text = match.group(2).strip()
+        if len(text) <= 80 and not text.endswith("?"):
+            letters.add(match.group(1).lower())
+    return len(letters)
+
+
+def _count_inline_mcq_options(content: str) -> int:
+    return len({m.group(1).lower() for m in _MCQ_INLINE_OPTION_RE.finditer(content)})
+
+
 def _classify_screen_text(content: str) -> str:
     c = content.lower()
-    # MCQ / Quiz detection
-    mcq_patterns = [
-        r"\b[a-d]\s*[\)\.\:]",
-        r"\([a-d]\)",
-        r"\[[a-d]\]",
-        r"multiple\s+choice",
-        r"select\s+(one|the\s+best|all|correct)",
-        r"which\s+of\s+the\s+following",
-        r"true\s+or\s+false",
-    ]
-    if any(re.search(p, c) for p in mcq_patterns) or any(k in c for k in ["a)", "b)", "c)", "d)", "multiple choice", "select one"]):
+
+    # Unambiguous quiz wording wins over other cues.
+    if _MCQ_PHRASE_RE.search(c):
+        return "quiz_mcq"
+
+    # Essay / long-answer prompts (checked before option structure so that
+    # (a)/(b) sub-questions and topic lists are not treated as MCQ options).
+    if _ESSAY_PATTERN_RE.search(c):
+        return "essay"
+
+    # Inline MCQ: explicit stem plus several option markers on the same line.
+    if "which of the following" in c and _count_inline_mcq_options(c) >= 3:
+        return "quiz_mcq"
+
+    # Real option lists: at least two distinct short, non-question options.
+    if _count_mcq_options(c) >= 2:
         return "quiz_mcq"
 
     # Coding detection
@@ -127,9 +182,19 @@ def _screen_system_addon(kind: str) -> str:
     if kind == "quiz_mcq":
         return (
             " The user pasted screen text that looks like a quiz or multiple-choice question. "
-            "Identify the best answer with a short justification. Format your response strictly as:\n"
+            "If answer options are present, identify the best answer with a short justification "
+            "and format your response as:\n"
             "**Answer:** [Option Letter/Number] Option Text\n"
-            "**Explanation:** 1-2 concise sentences explaining why this is correct."
+            "**Explanation:** 1-2 concise sentences explaining why this is correct.\n"
+            "If the text is not actually multiple-choice (for example an essay or long-answer "
+            "question), ignore that format and answer the question directly and completely."
+        )
+    if kind == "essay":
+        return (
+            " The user pasted an essay or long-answer question from the screen. Answer it fully "
+            "and directly: open with a clear answer or thesis, develop the key points in short "
+            "paragraphs or bullet points, and end with a brief conclusion. Do not use "
+            "multiple-choice formatting and do not comment on the question type - just answer it."
         )
     if kind == "coding":
         return (
@@ -137,8 +202,11 @@ def _screen_system_addon(kind: str) -> str:
             "Give a correct, minimal solution or fix with code in a fenced block."
         )
     if kind == "question":
-        return " The user has a direct question in the screen text; answer it directly."
-    return " Summarize or answer based on the screen content as appropriate."
+        return " The user has a direct question in the screen text; answer it directly and completely."
+    return (
+        " If the screen text contains a question or task, answer it directly. "
+        "Otherwise, summarize the screen content as appropriate."
+    )
 
 
 def _meeting_system_block() -> str:

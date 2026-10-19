@@ -20,6 +20,32 @@ class TestClassifyScreenText:
     def test_quiz_keywords(self):
         assert _classify_screen_text("Select one of the following multiple choice options") == "quiz_mcq"
 
+    def test_inline_mcq_with_stem(self):
+        text = "Which of the following is correct? A) 1 B) 2 C) 3 D) 4"
+        assert _classify_screen_text(text) == "quiz_mcq"
+
+    def test_essay_subquestions_not_mcq(self):
+        text = (
+            "Q1. Read the passage below and answer: "
+            "(a) What is the author's main argument? (b) Do you agree? Justify."
+        )
+        assert _classify_screen_text(text) == "essay"
+
+    def test_essay_topic_list_not_mcq(self):
+        text = (
+            "Select one of the following topics and write a 500-word essay: "
+            "A. Climate change B. Digital privacy"
+        )
+        assert _classify_screen_text(text) == "essay"
+
+    def test_essay_word_limit_not_mcq(self):
+        text = "Answer the following in 200-250 words: Explain the water cycle."
+        assert _classify_screen_text(text) == "essay"
+
+    def test_essay_marks_prompt_not_mcq(self):
+        text = "Discuss the impact of social media on society. (10 marks)"
+        assert _classify_screen_text(text) == "essay"
+
     def test_coding_detection(self):
         assert _classify_screen_text("def hello():\n    print('hi')") == "coding"
 
@@ -51,6 +77,15 @@ class TestScreenSystemAddon:
         addon = _screen_system_addon("quiz_mcq")
         assert "quiz" in addon.lower() or "multiple-choice" in addon.lower()
 
+    def test_quiz_addon_handles_non_mcq(self):
+        addon = _screen_system_addon("quiz_mcq")
+        assert "not actually multiple-choice" in addon.lower()
+
+    def test_essay_addon(self):
+        addon = _screen_system_addon("essay")
+        assert "essay" in addon.lower() or "long-answer" in addon.lower()
+        assert "**Answer:**" not in addon
+
     def test_coding_addon(self):
         addon = _screen_system_addon("coding")
         assert "coding" in addon.lower() or "code" in addon.lower()
@@ -76,6 +111,11 @@ class TestBuildSystemPrompt:
     def test_screen_coding_prompt(self):
         prompt = build_system_prompt("screen", "def sort(arr):\n    pass")
         assert "coding" in prompt.lower() or "code" in prompt.lower()
+
+    def test_screen_essay_prompt(self):
+        prompt = build_system_prompt("screen", "Write an essay on climate change.")
+        assert "essay" in prompt.lower()
+        assert "**Answer:**" not in prompt
 
     def test_screen_general_prompt(self):
         prompt = build_system_prompt("screen", "The weather is nice today")
@@ -127,6 +167,10 @@ class TestTokenLimits:
     def test_quiz_mcq_limit(self):
         limit = get_token_limit_for_context("screen", "A) one\nB) two")
         assert limit <= 500
+
+    def test_essay_limit_not_quiz_capped(self):
+        text = "Discuss the causes of the First World War. (10 marks)"
+        assert get_token_limit_for_context("screen", text) == MAX_TOKENS
 
 
 class TestEstimateVisibleTokens:
@@ -199,6 +243,12 @@ class TestLengthHints:
         assert "display area is small" not in build_system_prompt(
             "screen", text, DEFAULT_CAPACITY // 4
         )
+
+    def test_essay_gets_length_hint(self):
+        prompt = build_system_prompt(
+            "screen", "Write an essay on climate change.", DEFAULT_CAPACITY * 2
+        )
+        assert "large display" in prompt
 
     def test_meeting_question_never_gets_hint(self):
         prompt = build_system_prompt("meeting_question", "Can someone explain this?", DEFAULT_CAPACITY * 4)
