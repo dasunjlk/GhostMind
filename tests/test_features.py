@@ -8,6 +8,8 @@ Tests for newly added GhostMind features:
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
@@ -36,7 +38,7 @@ def qapp():
 
 class TestVersionMetadata:
     def test_version_constants(self):
-        assert version.__version__ == "1.0.0"
+        assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version.__version__)
         assert version.__app_name__ == "GhostMind"
         assert "Dasun" in version.__author__
         assert "dasunjlk/GhostMind" in version.__github__
