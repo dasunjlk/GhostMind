@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import os
 import signal
 import sys
 import time
@@ -71,21 +70,8 @@ def check_dependencies() -> List[str]:
             "  Install: pip install groq"
         )
 
-    # Groq API key (securely stored via keyring, or env/.env fallback)
-    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not groq_key:
-        try:
-            from utils.key_store import load_key
-
-            groq_key = load_key()
-        except Exception:
-            groq_key = ""
-    if not groq_key:
-        warnings.append(
-            "No Groq API key found.\n"
-            "  AI answers will not work.\n"
-            "  Open Settings -> API and paste a free key from https://console.groq.com"
-        )
+    # The Groq API key is optional at startup — new users paste one in
+    # Settings -> API on first run. Never warn or block for it here.
 
     # faster-whisper
     try:

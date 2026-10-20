@@ -52,3 +52,11 @@ class TestDependencyDialog:
         # Still a standard warning box with an OK to dismiss.
         ok = box.button(QMessageBox.StandardButton.Ok)
         assert ok is not None
+
+
+class TestStartupWarnings:
+    def test_missing_api_key_is_not_a_warning(self, monkeypatch):
+        """First-run users have no key yet; startup must not nag them."""
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+        warnings = app_main.check_dependencies()
+        assert not any("API key" in warning for warning in warnings)

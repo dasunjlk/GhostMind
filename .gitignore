@@ -43,3 +43,8 @@ Thumbs.db
 # Whisper / model caches (optional local)
 .cache/
 qa_shots/
+
+# .md documents
+first-release-last-plan.md
+future-plan.md
+release plan.md
