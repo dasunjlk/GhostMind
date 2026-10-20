@@ -11,5 +11,5 @@ keyboard>=0.13.5
 toml>=0.10.2
 keyring>=24.3.0
 opencv-python>=4.9.0
-numpy>=1.26.0
+numpy>=2.5.4
 sentry-sdk>=2.19.0
