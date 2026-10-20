@@ -123,6 +123,13 @@ class TestClassifyApiError:
 
 
 class TestResolveApiKey:
+    @pytest.fixture(autouse=True)
+    def _no_stored_key(self, monkeypatch):
+        """Keep tests off the developer's real Windows Credential Manager key."""
+        import utils.key_store
+
+        monkeypatch.setattr(utils.key_store, "load_key", lambda: "")
+
     def test_explicit_beats_everything(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "env_key")
         assert resolve_api_key(" explicit_key ") == "explicit_key"
