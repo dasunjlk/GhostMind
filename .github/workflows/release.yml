@@ -74,10 +74,11 @@ jobs:
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
+          name: GhostMind ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
           files: |
             dist/GhostMind-Setup-*.exe
             dist/GhostMind-Portable-*.zip
             dist/SHA256SUMS.txt
-          generate_release_notes: true
           prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
