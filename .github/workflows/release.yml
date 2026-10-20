@@ -79,4 +79,5 @@ jobs:
             dist/GhostMind-Portable-*.zip
             dist/SHA256SUMS.txt
           generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
           fail_on_unmatched_files: true
