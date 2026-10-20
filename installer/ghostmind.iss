@@ -16,25 +16,25 @@
 SourceDir=..
 ; Application information
 AppId={{8E9A7D5C-3F2B-4E1A-9C8D-7F6E5A4B3C2D}
-AppName={*#MyAppName}
-AppVersion={*#MyAppVersion}
-AppPublisher={*#MyAppPublisher}
-AppPublisherURL={*#MyAppURL}
-AppSupportURL={*#MyAppURL}
-AppUpdatesURL={*#MyAppURL}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
 DefaultDirName={localappdata}\GhostMind
 DefaultGroupName=GhostMind
 AllowNoIcons=yes
 ; Per-user install (no admin required)
 PrivilegesRequired=lowest
-; Disable Windows version detection (app is Windows 10+ only, but installer works on older versions)
+; Windows 10+ only
 MinVersion=10.0
-; Disable forcing to a specific architecture (allow both 32-bit and 64-bit installs)
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+; x64 binary; x64compatible also allows ARM64 Windows via emulation
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 ; Output settings
 OutputDir=dist
-OutputBaseFilename=GhostMind-Setup-{*#MyAppVersion}
+OutputBaseFilename=GhostMind-Setup-{#MyAppVersion}
 SetupIconFile=assets\icon.ico
 ; Compression
 Compression=lzma2/ultra64
@@ -44,7 +44,6 @@ CloseApplications=yes
 DisableProgramGroupPage=yes
 ; Uninstaller settings
 UninstallDisplayIcon={app}\ghostmind.exe
-UninstallDisplaySize=50
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -56,11 +55,6 @@ Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Start
 [Files]
 ; Main application files — the entire PyInstaller onedir build
 Source: "dist\ghostmind\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-; Exclude test files and development artifacts from the install
-Source: "dist\ghostmind\*.pyc"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs; Exclude
-Source: "dist\ghostmind\__pycache__"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs; Exclude
-Source: "dist\ghostmind\tests"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs; Exclude
-Source: "dist\ghostmind\.gitkeep"; DestDir: "{app}"; Flags: ignoreversion; Exclude
 ; Icon file (for uninstaller display)
 Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; LICENSE file (included in installer per release plan R-01)
