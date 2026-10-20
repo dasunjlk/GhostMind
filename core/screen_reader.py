@@ -10,7 +10,7 @@ import mss
 import mss.tools
 import numpy as np
 from PIL import Image
-from PyQt6.QtCore import QObject, pyqtSignal, QThread
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
@@ -82,7 +82,7 @@ def detect_meeting_app() -> Optional[str]:
 def get_monitors() -> List[Dict[str, Any]]:
     """Return connected monitors as dicts: id, name, width, height, left, top."""
     out: List[Dict[str, Any]] = []
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         for i, mon in enumerate(sct.monitors):
             if i == 0:
                 continue  # virtual "all in one"
@@ -104,7 +104,7 @@ def get_monitors() -> List[Dict[str, Any]]:
 
 
 def capture_screen(monitor_id: int) -> Image.Image:
-    with mss.mss() as sct:
+    with mss.MSS() as sct:
         if monitor_id < 0 or monitor_id >= len(sct.monitors):
             monitor_id = 1 if len(sct.monitors) > 1 else 0
         region = sct.monitors[monitor_id]
@@ -139,14 +139,14 @@ def extract_text(image: Image.Image, preprocess: bool = True) -> str:
     work = _preprocess_for_ocr(image) if preprocess else image
     try:
         text = pytesseract.image_to_string(work)
-    except pytesseract.TesseractNotFoundError:
+    except pytesseract.TesseractNotFoundError as exc:
         raise RuntimeError(
             "Tesseract executable not found on PATH.\n"
             "Install Tesseract: choco install tesseract\n"
             "Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
-        )
+        ) from exc
     except Exception as e:
-        raise RuntimeError(f"OCR failed: {e}")
+        raise RuntimeError(f"OCR failed: {e}") from e
     return (text or "").strip()
 
 
@@ -181,7 +181,7 @@ class ScreenScanWorker(QThread):
             active_title = get_active_window_title()
             meeting_app = detect_meeting_app()
             text = scan_and_extract(self._monitor_id)
-            
+
             # Enrich text with active window context if available
             combined = text
             if active_title and "ghostmind" not in active_title.lower():

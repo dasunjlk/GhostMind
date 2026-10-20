@@ -1,7 +1,6 @@
 """
 Main frameless always-on-top overlay: tabs, custom resize, header drag, stealth hooks.
 """
-
 from __future__ import annotations
 
 from enum import IntFlag, auto
@@ -9,21 +8,37 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from PyQt6.QtCore import (
+    QAbstractAnimation,
     QEasingCurve,
+    QEvent,
     QObject,
     QPoint,
+    QPointF,
     QRect,
+    QRectF,
     Qt,
+    QThread,
     QTimer,
     QVariantAnimation,
-    QEvent,
     pyqtSignal,
-    pyqtSlot,
 )
-from PyQt6.QtGui import QCursor, QFont, QFontDatabase, QIcon, QKeyEvent, QMouseEvent, QPainter
+from PyQt6.QtGui import (
+    QColor,
+    QCursor,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QKeyEvent,
+    QMouseEvent,
+    QPainter,
+    QPen,
+    QPolygonF,
+)
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPushButton,
     QStackedWidget,
@@ -32,154 +47,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import AiStreamWorker, DEFAULT_MODEL
+from core.ai_engine import DEFAULT_MODEL, AiStreamWorker, estimate_visible_tokens
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
-
-
-def _is_worker_active(worker: Any | None) -> bool:
-    """Lightweight safety probe used by tests."""
-    if worker is None:
-        return False
-    try:
-        return bool(worker.isRunning())
-    except Exception:
-        return False
-
-
-def _is_worker_active_deleted_worker_probe() -> None:
-    """Used only to verify the helper path; not part of the runtime flow."""
-    pass
-
-
-
 from ui.answer_panel import AnswerPanel
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
 
 
-
-class _OnboardingGuide(QWidget):
-    """Modern, arrow-anchored first-run hint popup.
-
-    It is frameless, auto-hiding, and moves near a target widget on demand.
-    It also exposes a close button so the user can dismiss it early.
-    """
-
-    shown = pyqtSignal()
-    dismissed = pyqtSignal()
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint | Qt.WindowType.Tool
-        )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
-        self.setFixedSize(280, 0)  # height adjusts per message
-        self._arrow_size = 14
-        self._current_target: QWidget | None = None
-        self._anim: QVariantAnimation | None = None
-        self._visible = False
-
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(0)
-
-        self._arrow = QLabel()
-        self._arrow.setFixedSize(self._arrow_size, self._arrow_size)
-        self._arrow.setStyleSheet(
-            "background:#00FF88; border-radius:3px;"
-        )
-        lay.addWidget(self._arrow, 0, Qt.AlignmentFlag.AlignLeft)
-
-        self._body = QLabel("", alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self._body.setStyleSheet(
-            "color:#E0E0E0; background:#222; border:1px solid #00FF88; border-radius:6px;"
-            " padding:10px 12px; font-size:12px; word-wrap:break-word;"
-        )
-        self._body.setWordWrap(True)
-        lay.addWidget(self._body, 0, Qt.AlignmentFlag.AlignLeft)
-
-        close_row = QHBoxLayout()
-        close_row.setContentsMargins(0, 0, 0, 0)
-        close_row.addStretch(1)
-        btn_close = QPushButton("×")
-        btn_close.setFixedSize(18, 18)
-        btn_close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_close.setStyleSheet(
-            "QPushButton { color:#888; background:#222; border:none; font-size:14px; }"
-            "QPushButton:hover { color:#00FF88; background:#333; }"
-        )
-        btn_close.clicked.connect(self._dismiss)
-        close_row.addWidget(btn_close)
-        lay.addLayout(close_row)
-
-    def _dismiss(self) -> None:
-        self.hide_guide()
-        self.dismissed.emit()
-
-    def set_message(self, text: str, caption: str = "Hint") -> None:
-        self._body.setText(f"<b>{caption}</b> — {text}")
-        hint_height = self._body.fontMetrics().boundingRect(
-            Qt.TextElideMode.NoElide, QRect(0, 0, 250, 0), text
-        ).height() + 54
-        self.setFixedHeight(max(60, hint_height))
-
-    def show_guide(self) -> None:
-        if not self._visible:
-            self._visible = True
-            self.show()
-            self.raise_()
-            self.setAttribute(Qt.WidgetAttribute.WA_MouseLeavesEvent, True)
-
-    def hide_guide(self) -> None:
-        if self._visible:
-            self._visible = False
-            self.hide()
-
-    def fire_near_settings(self) -> None:
-        """First-use guide anchored near the Settings button the user just opened."""
-        if not self.parent():
-            return
-        target = self.parent()
-        self._current_target = target
-        self.set_message(
-            "To add your API key first, go to Settings → API and paste a free key from https://console.groq.com.",
-            caption="Welcome",
-        )
-        self._place_near(target)
-        self.show_guide()
-        self.shown.emit()
-
-    def _place_near(self, anchor: QWidget) -> None:
-        if not anchor or not anchor.isVisible():
-            return
-        screen = anchor.windowHandle().screen() if getattr(anchor, "windowHandle", None) else None
-        base = anchor.mapToGlobal(QPoint(0, 0))
-        margin = 8
-        arrow_right = self._arrow_size + 4
-        preferred_x = max(0, base.x() - self.width() - arrow_right - margin)
-        preferred_y = base.y() + 8
-        geom = QRect(preferred_x, preferred_y, self.width(), self.height())
-        if screen:
-            geo = screen.availableGeometry()
-            geom.setBottom(min(geom.bottom(), geo.bottom() - 8))
-            geom.setLeft(max(geom.left(), geo.left() + 8))
-            geom.setRight(min(geom.right(), geo.right() - 8))
-        self.setGeometry(geom)
-
-    def leaveEvent(self, e) -> None:
-        if self._visible:
-            self._dismiss()
-        super().leaveEvent(e)
-
-
-from core.ai_engine import AiStreamWorker, DEFAULT_MODEL
-
-
-
-class _ResizeEdge(IntFlag):
+class Edge(IntFlag):
     NONE = 0
     LEFT = auto()
     RIGHT = auto()
@@ -187,33 +63,68 @@ class _ResizeEdge(IntFlag):
     BOTTOM = auto()
 
 
+FRAME = 8
+
+# Click-through guard poll interval (ms): how fast the header becomes
+# clickable when the cursor enters it while click-through is enabled.
+CLICK_GUARD_INTERVAL_MS = 50
+
+
+def _global_cursor_pos() -> QPoint:
+    return QCursor.pos()
+
+
+def _load_fonts(repo_root: Path) -> None:
+    font_dir = repo_root / "assets" / "fonts"
+    if not font_dir.is_dir():
+        return
+    for p in font_dir.glob("*.ttf"):
+        QFontDatabase.addApplicationFont(str(p))
+    for p in font_dir.glob("*.otf"):
+        QFontDatabase.addApplicationFont(str(p))
+
+
 class _HeaderDragFilter(QObject):
-    """Allows dragging the frameless window by its header."""
+    def __init__(self, window: QWidget) -> None:
+        super().__init__(window)
+        self._window = window
+        self._drag: Optional[QPoint] = None
 
-    def __init__(self, overlay: QMainWindow, parent: QObject | None = None) -> None:
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if event.type() == QEvent.Type.MouseButtonPress:
+            me = event
+            assert isinstance(me, QMouseEvent)
+            if me.button() == Qt.MouseButton.LeftButton:
+                self._drag = me.globalPosition().toPoint() - self._window.frameGeometry().topLeft()
+                return False
+        if event.type() == QEvent.Type.MouseMove:
+            me = event
+            assert isinstance(me, QMouseEvent)
+            if self._drag is not None and me.buttons() & Qt.MouseButton.LeftButton:
+                self._window.move(me.globalPosition().toPoint() - self._drag)
+                return False
+        if event.type() == QEvent.Type.MouseButtonRelease:
+            self._drag = None
+        return False
+
+
+class _RoundCtl(QPushButton):
+    def __init__(self, color: str, hover_color: str = "", parent=None) -> None:
         super().__init__(parent)
-        self._overlay = overlay
-
-    def eventFilter(self, a0, a1) -> bool:
-        if a1.type() == QEvent.Type.MouseButtonPress and a0.objectName() == "header":
-            self._drag_start = a0.globalPosition().toPoint()
-            self._geom_start = self._overlay.geometry()
-            return True
-        if a1.type() == QEvent.Type.MouseMove and self._drag_start is not None:
-            delta = a0.globalPosition().toPoint() - self._drag_start
-            geom = self._geom_start.translated(delta)
-            self._overlay.setGeometry(geom)
-            return True
-        if a1.type() == QEvent.Type.MouseButtonRelease:
-            self._drag_start = None
-            return True
-        return super().eventFilter(a0, a1)
+        self._color = color
+        self.setFixedSize(12, 12)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        hover = hover_color or color
+        self.setStyleSheet(
+            f"QPushButton {{ background:{color}; border-radius:6px; border:none; }}"
+            f"QPushButton:hover {{ background:{hover}; }}"
+        )
 
 
 class _CaptureIconWidget(QWidget):
-    """Zoom-style capture toggle: drawn mic/speaker glyph, red slash when off.
+    """Zoom-style header toggle: drawn mic/speaker/pointer glyph, red slash when off.
 
-    Click toggles; the app state lives in the capture settings that callers sync.
+    Click toggles; the app state lives in the settings that callers sync.
     """
 
     toggled = pyqtSignal(bool)
@@ -265,66 +176,143 @@ class _CaptureIconWidget(QWidget):
     def paintEvent(self, event) -> None:
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        cx, cy, r = self.width() / 2, self.height() / 2, 9
+        r = self.rect()
+        if self.underMouse():
+            p.fillRect(r, QColor(34, 34, 34))
+
+        color = QColor("#00FF88") if self._on else QColor("#888888")
+        cx = r.center().x()
+        right_edge = r.right()
+        bottom_edge = r.bottom()
+
         if self._kind == "mic":
-            p.setPen(QPen(QColor("#00FF88"), 2))
-            p.drawEllipse(cx, cy - 4, r, r)
-            p.drawLine(cx, cy - 12, cx, cy - r - 3)
-        else:
-            p.setPen(QPen(QColor("#00FF88"), 2))
-            p.drawArc(QRectF(cx - r, cy - r, r * 2, r * 2), 0, 512)
-            p.drawRect(cx - 3, cy - 8, 6, 16)
-        if not self._on:
-            p.setPen(QPen(QColor("#FF5555"), 2.4))
-            p.drawLine(3, 3, self.width() - 3, self.height() - 3)
+            # Capsule + arc + stand, from a 7x13 cell centered in the widget
+            w, h = 7.0, 13.0
+            x = cx - w / 2.0
+            y = (r.height() - h) / 2.0 - 1.5
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            p.drawRoundedRect(QRectF(x, y, w, h), 3.5, 3.5)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.6)
+            p.setPen(pen)
+            p.drawArc(QRectF(x - 3.5, y + 2.0, w + 7.0, h + 2.0), -60 * 16, 120 * 16 - 1)
+            p.drawLine(QPointF(cx, y + h + 0.5), QPointF(cx, bottom_edge - 3.0))
+            p.drawLine(QPointF(cx - 3.0, bottom_edge - 3.0), QPointF(cx + 3.0, bottom_edge - 3.0))
+        elif self._kind == "speaker":
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            box_w, box_h = 6.0, 8.0
+            bx = cx - 6.5 - box_w / 2.0
+            by = (r.height() - box_h) / 2.0
+            p.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(bx, by),
+                        QPointF(bx + box_w, by - 1.5),
+                        QPointF(bx + box_w, by + box_h + 1.5),
+                        QPointF(bx, by + box_h),
+                    ]
+                )
+            )
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            pen = QPen(color)
+            pen.setWidthF(1.7)
+            p.setPen(pen)
+            for ax in (bx + box_w, bx + box_w + 3.0):
+                p.drawArc(QRectF(ax, r.height() / 2.0 - 5.5, 5.0, 11.0), -55 * 16, 110 * 16 - 1)
+        else:  # "pointer"
+            # Mouse-pointer arrow, from a 9x13.5 cell centered in the widget
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(color)
+            ax = cx - 4.6
+            ay = (r.height() - 13.5) / 2.0
+            p.drawPolygon(
+                QPolygonF(
+                    [
+                        QPointF(ax, ay),
+                        QPointF(ax, ay + 12.0),
+                        QPointF(ax + 3.2, ay + 9.2),
+                        QPointF(ax + 5.0, ay + 13.5),
+                        QPointF(ax + 7.2, ay + 12.6),
+                        QPointF(ax + 5.4, ay + 8.4),
+                        QPointF(ax + 9.2, ay + 8.0),
+                    ]
+                )
+            )
+
         if self._kind == "mic" and not self._has_device:
-            p.setPen(QPen(QColor("#FFAA00"), 2))
-            p.drawText(QRectF(0, 0, self.width(), self.height()), Qt.AlignmentFlag.AlignCenter, "!")
+            # Zoom-style amber "!" badge: no input hardware on this system
+            pen = QPen(QColor(255, 193, 7), 2.0)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.right() - 9.5, r.top() + 5.0), QPointF(r.right() - 9.5, r.top() + 11.0))
+            p.drawPoint(QPointF(r.right() - 9.5, r.top() + 13.5))
+
+        if not self._on:
+            # Zoom-style red slash over the glyph
+            pen = QPen(QColor(255, 68, 68), 2.2)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            p.setPen(pen)
+            p.drawLine(QPointF(r.left() + 4, r.top() + 4), QPointF(right_edge - 4, bottom_edge - 4))
+
+
+def _is_worker_active(worker: Optional[QThread]) -> bool:
+    """Safely check if a QThread worker is alive without triggering C++ deleted object errors."""
+    if worker is None:
+        return False
+    try:
+        from PyQt6 import sip
+        if sip.isdeleted(worker):
+            return False
+        return bool(worker.isRunning())
+    except (RuntimeError, ReferenceError, TypeError):
+        # TypeError: a non-sip object was passed (defensive; should not happen)
+        return False
+
 
 
 class OverlayWindow(QMainWindow):
-    """Main frameless overlay window.
-
-    It has a minimal chrome header, tabs, and a settings panel stack page.
-    """
-
     settings_changed = pyqtSignal(dict)
+    click_through_changed = pyqtSignal(bool)
+    geometry_changed = pyqtSignal(dict)
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
 
-    def __init__(self, settings: Dict[str, Any], repo_root: Path) -> None:
-        super().__init__()
-        self._settings = dict(settings)
+    def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
+        super().__init__(parent)
         self._repo_root = repo_root
-        self.setWindowTitle("GhostMind")
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self._settings = dict(settings)
+        self._resize_edge = Edge.NONE
+        self._resize_start_pos: Optional[QPoint] = None
+        self._resize_start_geom: Optional[QRect] = None
+        self._ai_worker: Optional[AiStreamWorker] = None
+        self._scan_worker: Optional[ScreenScanWorker] = None
+        self._visible_target = True
+        self.close_event_allowed = True
+        self._opacity_anim: Optional[QVariantAnimation] = None
+        self._restoring_geometry = False
+        self._geometry_save_timer = QTimer(self)
+        self._geometry_save_timer.setSingleShot(True)
+        self._geometry_save_timer.timeout.connect(self._emit_geometry)
+
+        # Click-through guard: WS_EX_TRANSPARENT is per-HWND, so while
+        # click-through is on we poll the cursor and temporarily drop the
+        # style whenever the header (or the open settings panel) needs clicks.
+        self._click_guard_interactive = False
+        self._click_guard_timer = QTimer(self)
+        self._click_guard_timer.setInterval(CLICK_GUARD_INTERVAL_MS)
+        self._click_guard_timer.timeout.connect(self._update_click_guard)
+
+        _load_fonts(repo_root)
+
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
-            | Qt.WindowType.WindowTransparentForInput
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, False)
-
-        self._opacity_anim: Optional[QVariantAnimation] = None
-        self._visible_target = False
-        self._fade_target: Optional[float] = None
-        self._auto_timer: QTimer
-        self._settings_panel: SettingsPanel
-        self._tabs: QTabWidget
-        self._answer_panel: AnswerPanel
-        self._subtitle_bar: SubtitleBar
-        self._stack: QStackedWidget
-        self._geometry_save_timer: QTimer
-        self._header_drag: _HeaderDragFilter
-        self._mic_toggle: _CaptureIconWidget
-        self._sys_toggle: _CaptureIconWidget
-        self._has_microphone: Optional[bool] = None
-        self._onboarding: _OnboardingGuide
-        self._onboarding_button: QPushButton
-        self.close_event_allowed = False
-
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(480, 600)
         self.setMinimumSize(320, 360)
         self._restore_window_geometry()
@@ -355,7 +343,6 @@ class OverlayWindow(QMainWindow):
 
         # Header Bar
         header = QWidget()
-        header.setObjectName("header")
         header.setFixedHeight(36)
         header.setStyleSheet("background:#141414; border-top-left-radius:7px; border-top-right-radius:7px;")
         hl = QHBoxLayout(header)
@@ -373,25 +360,29 @@ class OverlayWindow(QMainWindow):
             ui_font = QFont("Segoe UI", 11)
         title.setFont(ui_font)
 
-        btn_close = QPushButton("✕")
-        btn_close.setFixedSize(24, 24)
-        btn_close.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_close.setStyleSheet(
-            "QPushButton { background:#FF4444; color:#fff; border:none; border-radius:12px; font-size:12px; }"
-            "QPushButton:hover { background:#FF6B6B; }"
-        )
-        btn_close.setToolTip("Close to tray")
-        btn_close.clicked.connect(self._minimize_hide)
+        btn_close = _RoundCtl("#FF4444", "#FF6B6B")
+        btn_close.setToolTip("Hide to Tray")
+        btn_close.clicked.connect(self.close)
 
-        btn_min = QPushButton("—")
-        btn_min.setFixedSize(24, 24)
-        btn_min.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn_min.setStyleSheet(
-            "QPushButton { background:#333; color:#fff; border:none; border-radius:12px; font-size:14px; }"
-            "QPushButton:hover { background:#555; }"
-        )
+        btn_min = _RoundCtl("#FFD54F", "#FFE082")
         btn_min.setToolTip("Minimize")
         btn_min.clicked.connect(self._minimize_hide)
+
+
+        # Scan button: same action as the screen-scan hotkey (Ctrl+Shift+S)
+        btn_scan = QPushButton("⚡ Scan")
+        btn_scan.setObjectName("scanBtn")
+        btn_scan.setToolTip("Scan screen & answer (Ctrl+Shift+S)")
+        btn_scan.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn_scan.setStyleSheet(
+            "#scanBtn { background: transparent; color: #00FF88; border: 1px solid #00FF88;"
+            " border-radius: 4px; padding: 2px 10px; font-size: 12px; font-weight: bold; }"
+            "#scanBtn:hover { background: rgba(0, 255, 136, 0.15); }"
+            "#scanBtn:pressed { background: rgba(0, 255, 136, 0.30); }"
+            "#scanBtn:disabled { color: #556; border-color: #556; }"
+        )
+        btn_scan.clicked.connect(self.trigger_screen_scan)
+        self._btn_scan = btn_scan
 
         # Settings Gear Icon Button
         btn_set = QPushButton("⚙")
@@ -402,13 +393,49 @@ class OverlayWindow(QMainWindow):
             "QPushButton { background: transparent; color: #888888; border: none; font-size: 15px; border-radius: 4px; padding-bottom: 2px; }"
             "QPushButton:hover { background: #222222; color: #00FF88; }"
         )
-        btn_set.clicked.connect(self._on_settings_button_clicked)
+        btn_set.clicked.connect(self._toggle_settings)
+
+        # Quick capture toggles (Zoom-style): click to enable/disable mic / system
+        # audio. Kept in sync with the Audio tab via settings_changed/apply_settings.
+        self._mic_toggle = _CaptureIconWidget(
+            "mic", bool(self._settings.get("capture_mic", True)), "Microphone capture"
+        )
+        self._mic_toggle.toggled.connect(self._on_quick_capture_toggle)
+        self._sys_toggle = _CaptureIconWidget(
+            "speaker",
+            bool(self._settings.get("capture_system", True)),
+            "System audio capture",
+        )
+        self._sys_toggle.toggled.connect(self._on_quick_capture_toggle)
+        # v1.0: listening features are hidden for the first release; the widgets
+        # stay wired for future re-enable (see future-plan.md checklist).
+        self._mic_toggle.setVisible(False)
+        self._sys_toggle.setVisible(False)
+        # main.py probes audio hardware and calls set_microphone_available().
+        self._has_microphone: Optional[bool] = None
+
+        # Click-through toggle (v1.0): flip pass-through clicks from the header
+        # without opening Settings; same action as the Ctrl+Shift+X hotkey.
+        self._click_through_toggle = _CaptureIconWidget(
+            "pointer",
+            bool(self._settings.get("click_through", False)),
+            "Click-through (Ctrl+Shift+X)",
+        )
+        self._click_through_toggle.toggled.connect(self._on_click_through_toggle)
 
         hl.addWidget(btn_close)
         hl.addWidget(btn_min)
         hl.addSpacing(8)
         hl.addWidget(title)
         hl.addStretch(1)
+        hl.addWidget(btn_scan)
+        hl.addSpacing(6)
+        hl.addWidget(self._mic_toggle)
+        hl.addSpacing(2)
+        hl.addWidget(self._sys_toggle)
+        hl.addSpacing(2)
+        hl.addWidget(self._click_through_toggle)
+        hl.addSpacing(4)
         hl.addWidget(btn_set)
 
         root.addWidget(header)
@@ -439,14 +466,41 @@ class OverlayWindow(QMainWindow):
 
         self._tabs.addTab(self._answer_panel, "Answers")
         self._tabs.addTab(sub_host, "Subtitles")
+        # v1.0: subtitles UI hidden for the first release; code kept in full so
+        # the tab can be re-shown (see future-plan.md checklist).
+        self._tabs.setTabVisible(1, False)
         mp_lay.addWidget(self._tabs, 1)
+
+        # --- Manual question input (F-01) ---
+        self._ask_row = QWidget()
+        ask_lay = QHBoxLayout(self._ask_row)
+        ask_lay.setContentsMargins(6, 0, 6, 6)
+        ask_lay.setSpacing(6)
+        self._ask_input = QLineEdit()
+        self._ask_input.setPlaceholderText("Ask anything… (Enter to send, Shift+Enter for new line)")
+        self._ask_input.setStyleSheet(
+            "QLineEdit { background:#141414; color:#E0E0E0; border:1px solid #333;"
+            " border-radius:4px; padding:4px 8px; font-size:12px; }"
+            "QLineEdit:focus { border-color:#00FF88; }"
+        )
+        self._ask_input.returnPressed.connect(self._send_manual_question)
+        self._ask_btn = QPushButton("Ask")
+        self._ask_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._ask_btn.setStyleSheet(
+            "QPushButton { background:#162B1E; color:#00FF88; border:1px solid #00FF88;"
+            " padding:4px 12px; border-radius:4px; font-size:12px; font-weight:bold; }"
+            "QPushButton:hover { background:#1E3E2B; }"
+            "QPushButton:disabled { color:#556; border-color:#556; }"
+        )
+        self._ask_btn.clicked.connect(self._send_manual_question)
+        ask_lay.addWidget(self._ask_input, 1)
+        ask_lay.addWidget(self._ask_btn)
+        mp_lay.addWidget(self._ask_row)
 
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
         self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
-        self._settings_panel._view_guide_requested.connect(self._on_settings_guide_requested)
-        self._settings_panel._overlay_ref = self
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
         self._subtitle_bar.summarize_requested.connect(self.summarize_meeting_requested.emit)
@@ -458,17 +512,14 @@ class OverlayWindow(QMainWindow):
         self._auto_timer = QTimer(self)
         self._auto_timer.timeout.connect(self._trigger_scan)
 
-        self._opacity_anim: Optional[QVariantAnimation] = None
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
 
+        self._header = header
         self._header_drag = _HeaderDragFilter(self)
         header.installEventFilter(self._header_drag)
 
         self._apply_auto_timer_state()
-
-        # First-run onboarding (v1.0): modern arrow-anchored popup near Settings.
-        self._onboarding = _OnboardingGuide(self)
-        self._onboarding_button = btn_set
 
     # --- public API for main.py ---
     def apply_settings(self, s: Dict[str, Any]) -> None:
@@ -476,7 +527,47 @@ class OverlayWindow(QMainWindow):
         self._apply_window_opacity(float(self._settings.get("opacity", 0.92)))
         self._apply_auto_timer_state()
         self._settings_panel.apply_data(self._settings)
+        self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
+        self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
+        self._click_through_toggle.set_on(bool(self._settings.get("click_through", False)))
+        self.apply_font_size(int(self._settings.get("font_size", 13)))
         self._reapply_stealth()
+
+    def apply_font_size(self, pt: int) -> None:
+        """Apply the user's font size preference across the app (Preferences)."""
+        pt = max(9, min(24, int(pt)))
+        f = self.font()
+        f.setPointSize(pt)
+        self.setFont(f)  # cascades to headers, tabs, buttons, settings panel
+        self._answer_panel.apply_font_size(pt)
+        self._subtitle_bar.apply_font_size(pt)
+        self._ask_input.setStyleSheet(
+            f"QLineEdit {{ background:#141414; color:#E0E0E0; border:1px solid #333;"
+            f" border-radius:4px; padding:4px 8px; font-size:{pt}px; }}"
+            f"QLineEdit:focus {{ border-color:#00FF88; }}"
+        )
+
+    def _on_quick_capture_toggle(self, _on: bool) -> None:
+        """Header mic/speaker icons changed: persist + restart audio capture."""
+        self._settings["capture_mic"] = self._mic_toggle.is_on()
+        self._settings["capture_system"] = self._sys_toggle.is_on()
+        self.settings_changed.emit(dict(self._settings))
+
+    def _on_click_through_toggle(self, on: bool) -> None:
+        """Header pointer icon changed: apply immediately and persist.
+
+        Uses a dedicated signal (not settings_changed) so main.py can save the
+        setting without restarting audio capture.
+        """
+        self._settings["click_through"] = bool(on)
+        self._settings_panel.set_click_through(bool(on))
+        self._reapply_stealth()
+        self.click_through_changed.emit(bool(on))
+
+    def set_microphone_available(self, available: bool) -> None:
+        """Show an amber "!" on the mic icon when the system has no input device."""
+        self._has_microphone = bool(available)
+        self._mic_toggle.set_has_device(bool(available))
 
     def push_subtitle_line(self, line: str) -> None:
         self._subtitle_bar.append_line(line)
@@ -495,50 +586,73 @@ class OverlayWindow(QMainWindow):
         """Run Groq on arbitrary text (e.g. meeting question or transcript)."""
         if not (content or "").strip():
             return
-        worker = AiStreamWorker(
-            content=content,
-            context_type=context_type,
-            model_id=self._settings.get("ai_model", DEFAULT_MODEL),
-            settings=self._settings,
-        )
-        worker.moveToThread(worker)
-        worker.finished.connect(self._answer_panel.append_block)
-        worker.error.connect(self._answer_panel.end_stream_error)
-        worker.start()
-        self._current_worker = worker
+        self._tabs.setCurrentIndex(0)
+        self._start_ai(content.strip(), context_type)
+
+    def focus_question_input(self) -> None:
+        """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
+        if self._stack.currentIndex() == 1:
+            self._stack.setCurrentIndex(0)
+            self._settings_panel.hide()
+        self._tabs.setCurrentIndex(0)
+        if not self.isVisible():
+            self.toggle_visibility_animated()
+        self.raise_()
+        self._ask_input.setFocus()
+
+    def _send_manual_question(self) -> None:
+        """Ask button / Enter in the manual question box (F-01)."""
+        text = self._ask_input.text().strip()
+        if not text:
+            return
+        if _is_worker_active(self._ai_worker):
+            # Send rejected: keep the typed text so nothing is lost.
+            self._answer_panel.end_stream_error("Already processing another answer.")
+            return
+        self._ask_input.clear()  # accepted: free the box for the next question
+        # Chat-style: echo the user's message in the panel. Scan/OCR answers do
+        # not get this bubble — only typed messages do (F-01).
+        self._answer_panel.add_user_message(text)
+        self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:
-        """OCR current monitor and send result to AI."""
-        monitors = []
-        try:
-            from core.screen_reader import get_monitors
+        if _is_worker_active(self._scan_worker):
+            return
+        mid = int(self._settings.get("monitor_id", 1))
+        self._tabs.setCurrentIndex(0)
+        self._answer_panel.start_thinking()
+        self._btn_scan.setEnabled(False)
+        worker = ScreenScanWorker(mid)
+        self._scan_worker = worker
 
-            monitors = get_monitors()
-        except Exception as e:  # never let OCR probe break the UI
-            self._answer_panel.end_stream_error(f"Screen capture unavailable: {e}")
-            return
-        target_id = int(self._settings.get("monitor_id", 1))
-        mon = next((m for m in monitors if int(m.get("id", -1)) == target_id), None)
-        if mon is None:
-            self._answer_panel.end_stream_error(f"Monitor {target_id} not found")
-            return
-        worker = ScreenScanWorker(mon["id"])
-        worker.moveToThread(worker)
-        worker.text_ready.connect(self._on_scan_done)
-        worker.error.connect(self._answer_panel.end_stream_error)
+        def _cleanup_scan() -> None:
+            if self._scan_worker is worker:
+                self._scan_worker = None
+            self._btn_scan.setEnabled(True)
+
+        worker.finished.connect(_cleanup_scan)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished_ok.connect(self._on_scan_done)
+        worker.failed.connect(self._on_scan_fail)
         worker.start()
 
     def clear_answers(self) -> None:
-        self._answer_panel.clear()
+        self._answer_panel.clear_all()
 
     def toggle_subtitles_tab(self) -> None:
-        if not self._subtitle_bar.isVisible():
-            self._subtitle_bar.show()
-        else:
-            self._subtitle_bar.hide()
+        # v1.0: subtitles tab hidden (future-plan.md checklist). Re-enabling the
+        # tab automatically restores this hotkey behavior.
+        if not self._tabs.isTabVisible(1):
+            return
+        idx = 1 if self._tabs.currentIndex() == 0 else 0
+        self._tabs.setCurrentIndex(idx)
 
-    # --- internal helpers ---
-    def _on_settings_button_clicked(self) -> None:
+    # --- internals ---
+    def _minimize_hide(self) -> None:
+        self._visible_target = False
+        self._fade_to(0.0, hide_on_finish=True)
+
+    def _toggle_settings(self) -> None:
         if self._stack.currentIndex() == 1:
             self._stack.setCurrentIndex(0)
             self._settings_panel.hide()
@@ -546,11 +660,6 @@ class OverlayWindow(QMainWindow):
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()
-            self._onboarding.fire_near_settings()
-
-    def _on_settings_guide_requested(self) -> None:
-        """Replay the first-run guide near the Settings button."""
-        self._onboarding.fire_near_settings()
 
     def _on_settings_saved(self, data: Dict[str, Any]) -> None:
         self._settings.update(data)
@@ -570,105 +679,287 @@ class OverlayWindow(QMainWindow):
 
     def _on_scan_done(self, text: str) -> None:
         if not text.strip():
-            self._answer_panel.end_stream_error("No text found on screen")
+            self._answer_panel.end_stream_error(
+                "OCR returned no text. The screen may be blank or Tesseract could not read it."
+            )
             return
-        self.request_ai_answer(text, "screen")
+        self._start_ai(text, "screen")
 
-    def _minimize_hide(self) -> None:
-        self._fade_to(0.0, hide_on_finish=True)
+    def _on_scan_fail(self, err: str) -> None:
+        msg = str(err)
+        if "pytesseract" in msg.lower() or "tesseract" in msg.lower():
+            friendly = (
+                "Screen scan failed: Tesseract OCR is not available.\n\n"
+                "Install Tesseract: choco install tesseract\n"
+                "Then restart GhostMind."
+            )
+        elif "mss" in msg.lower():
+            friendly = (
+                "Screen capture failed. Check that the monitor ID is correct in Settings."
+            )
+        else:
+            friendly = f"Screen scan error: {msg}"
+        self._answer_panel.end_stream_error(friendly)
+
+    def _start_ai(self, content: str, context_type: str) -> None:
+        if _is_worker_active(self._ai_worker):
+            if context_type == "meeting_audio":
+                return
+            self._answer_panel.stop_thinking()
+            self._answer_panel.end_stream_error("Already processing another answer.")
+            return
+
+        model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
+        viewport = self._answer_panel._scroll.viewport()
+        capacity = estimate_visible_tokens(
+            viewport.width(),
+            viewport.height(),
+            int(self._settings.get("font_size", 13)),
+        )
+
+        self._answer_panel.begin_answer_stream()
+        worker = AiStreamWorker(content, context_type, model_id=model_id, capacity=capacity)
+        self._ai_worker = worker
+
+        def _cleanup_ai() -> None:
+            if self._ai_worker is worker:
+                self._ai_worker = None
+
+        worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
+        worker.finished_ok.connect(self._answer_panel.end_stream_success)
+        worker.failed.connect(self._answer_panel.end_stream_error)
+        worker.finished.connect(_cleanup_ai)
+        worker.finished.connect(worker.deleteLater)
+        worker.start()
+
+
+    def _apply_window_opacity(self, op: float) -> None:
+        op = max(0.20, min(1.0, float(op)))
+        self.setWindowOpacity(op)
 
     def _fade_to(self, target: float, hide_on_finish: bool = False) -> None:
-        if self._opacity_anim is not None and self._opacity_anim.state() == QVariantAnimation.State.Running:
-            self._opacity_anim.stop()
-        self._fade_target = target
-        current = self.windowOpacity()
-        self._opacity_anim = QVariantAnimation(current, target, 120)
-        self._opacity_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
-        self._opacity_anim.valueChanged.connect(self._on_opacity_frame)
-        if hide_on_finish:
-            self._opacity_anim.finished.connect(self._on_fade_finished)
-            self._opacity_anim.finished.connect(self._opacity_anim.deleteLater)
-        self._opacity_anim.start()
+        anim = QVariantAnimation(self)
+        anim.setDuration(150)
+        anim.setStartValue(float(self.windowOpacity()))
+        anim.setEndValue(float(target))
+        anim.setEasingCurve(QEasingCurve.Type.InOutQuad)
+        anim.valueChanged.connect(lambda v: self.setWindowOpacity(float(v)))
 
-    def _on_opacity_frame(self, value: float) -> None:
-        self.setWindowOpacity(max(0.0, min(1.0, value)))
+        def _fin() -> None:
+            self.setWindowOpacity(float(target))
+            if hide_on_finish and target <= 0.01:
+                self.hide()
 
-    def _on_fade_finished(self) -> None:
-        if self._fade_target == 0.0:
-            self.hide()
-        self._fade_target = None
+        anim.finished.connect(_fin)
+        anim.start()
+        self._opacity_anim = anim
+
+    def _click_through_enabled(self) -> bool:
+        return bool(self._settings.get("click_through", False))
+
+    def _pointer_in_header(self) -> bool:
+        """True while the cursor is over the header bar (always interactive)."""
+        if not self._header.isVisible():
+            return False
+        rect = QRect(self._header.mapToGlobal(QPoint(0, 0)), self._header.size())
+        return rect.contains(_global_cursor_pos())
+
+    def _sync_click_guard_timer(self) -> None:
+        """Run the guard poll only while click-through is on and the window is shown."""
+        if self._click_through_enabled() and self.isVisible():
+            if not self._click_guard_timer.isActive():
+                self._click_guard_timer.start()
+        else:
+            self._click_guard_timer.stop()
+            self._click_guard_interactive = False
+
+    def _update_click_guard(self) -> None:
+        """Keep the header / open settings panel clickable despite click-through.
+
+        The rest of the overlay stays transparent and passes clicks through.
+        """
+        if not (self._click_through_enabled() and self.isVisible()):
+            self._click_guard_timer.stop()
+        interactive = bool(
+            self.isVisible()
+            and (self._stack.currentIndex() == 1 or self._pointer_in_header())
+        )
+        if interactive != self._click_guard_interactive:
+            self._click_guard_interactive = interactive
+            self._reapply_stealth()
 
     def _reapply_stealth(self) -> None:
+        self._sync_click_guard_timer()
         try:
             hwnd = int(self.winId())
+        except Exception:
+            return
+        if hwnd:
             apply_stealth(
                 hwnd,
-                click_through=bool(self._settings.get("click_through", False)),
+                click_through=self._click_through_enabled() and not self._click_guard_interactive,
                 dwm_cloak=bool(self._settings.get("dwm_cloak", False)),
             )
-        except Exception as e:
-            pass
 
-    def set_microphone_available(self, available: bool) -> None:
-        """Mark whether the machine has a microphone for the header badge."""
-        if self._has_microphone != bool(available):
-            self._has_microphone = bool(available)
-            if self._mic_toggle is not None:
-                self._mic_toggle.set_has_device(self._has_microphone)
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        QTimer.singleShot(50, self._reapply_stealth)
 
-    def _apply_window_opacity(self, opacity: float) -> None:
-        value = max(0.1, min(1.0, float(opacity)))
-        self.setWindowOpacity(value)
-        self._settings["opacity"] = value
+    def moveEvent(self, e) -> None:
+        super().moveEvent(e)
+        self._reapply_stealth()
+        self._schedule_geometry_save()
+
+    def resizeEvent(self, e) -> None:
+        super().resizeEvent(e)
+        self._reapply_stealth()
+        self._schedule_geometry_save()
+
+    def hideEvent(self, e) -> None:
+        super().hideEvent(e)
+        self._sync_click_guard_timer()
+        self._flush_geometry_save()
+
+    # --- window geometry persistence (R-04) ---
+    def _restore_window_geometry(self) -> None:
+        """Restore last saved size/position, clamped into available screen space."""
+        self._restoring_geometry = True
+        try:
+            w = self._settings.get("window_w")
+            h = self._settings.get("window_h")
+            if isinstance(w, int) and isinstance(h, int) and w >= 320 and h >= 360:
+                self.resize(w, h)
+            x = self._settings.get("window_x")
+            y = self._settings.get("window_y")
+            if isinstance(x, int) and isinstance(y, int):
+                self.move(self._clamped_position(QPoint(x, y)))
+        finally:
+            self._restoring_geometry = False
+
+    def _clamped_position(self, pos: QPoint) -> QPoint:
+        """Clamp a stored position into visible screen space.
+
+        Handles a disconnected monitor gracefully: falls back to the stored
+        screen name, then to the primary screen, so the window can never be
+        restored stranded offscreen.
+        """
+        screen = QApplication.screenAt(pos)
+        if screen is None:
+            name = self._settings.get("window_screen")
+            screen = next(
+                (s for s in QApplication.screens() if s.name() == name), None
+            ) or QApplication.primaryScreen()
+        if screen is None:
+            return pos
+        avail = screen.availableGeometry()
+        margin = 40
+        x = max(avail.left() - self.width() + margin, min(pos.x(), avail.right() - margin))
+        y = max(avail.top(), min(pos.y(), avail.bottom() - margin))
+        return QPoint(x, y)
 
     def _schedule_geometry_save(self) -> None:
-        if self._geometry_save_timer is None:
-            self._geometry_save_timer = QTimer(self)
-            self._geometry_save_timer.setSingleShot(True)
-            self._geometry_save_timer.timeout.connect(self._flush_geometry_save)
-        self._geometry_save_timer.start(400)
+        """Debounce geometry persistence; skip during restore and fade animations."""
+        if self._restoring_geometry:
+            return
+        if self._opacity_anim is not None and self._opacity_anim.state() == QAbstractAnimation.State.Running:
+            return
+        self._geometry_save_timer.start(500)
 
     def _flush_geometry_save(self) -> None:
-        self._settings["window_x"] = self.x()
-        self._settings["window_y"] = self.y()
-        self._settings["window_w"] = self.width()
-        self._settings["window_h"] = self.height()
-        screen = self.screen()
-        self._settings["window_screen"] = screen.name() if screen is not None else None
+        """Persist geometry immediately (e.g. when the window hides)."""
+        self._geometry_save_timer.stop()
+        if not self._restoring_geometry:
+            self._emit_geometry()
 
-    def _restore_window_geometry(self) -> None:
-        sx = self._settings.get("window_x")
-        sy = self._settings.get("window_y")
-        sw = self._settings.get("window_w")
-        sh = self._settings.get("window_h")
-        try:
-            if isinstance(sx, int) and isinstance(sy, int):
-                self.move(sx, sy)
-            if isinstance(sw, int) and isinstance(sh, int):
-                self.resize(sw, sh)
-        except Exception:
-            pass
-        self._schedule_geometry_save()
+    def _emit_geometry(self) -> None:
+        g = self.geometry()
+        screen = QApplication.screenAt(g.center())
+        self.geometry_changed.emit(
+            {
+                "window_x": g.x(),
+                "window_y": g.y(),
+                "window_w": g.width(),
+                "window_h": g.height(),
+                "window_screen": screen.name() if screen else self._settings.get("window_screen"),
+            }
+        )
 
-    def resizeEvent(self, e: QResizeEvent) -> None:
-        super().resizeEvent(e)
-        self._schedule_geometry_save()
-
-    def moveEvent(self, e: QMouseEvent) -> None:
-        super().moveEvent(e)
-        self._schedule_geometry_save()
+    def _edge_at(self, pos: QPoint) -> Edge:
+        g = self.geometry()
+        x, y = pos.x(), pos.y()
+        e = Edge.NONE
+        if x <= FRAME:
+            e |= Edge.LEFT
+        if x >= g.width() - FRAME:
+            e |= Edge.RIGHT
+        if y <= FRAME:
+            e |= Edge.TOP
+        if y >= g.height() - FRAME:
+            e |= Edge.BOTTOM
+        return e
 
     def mousePressEvent(self, e: QMouseEvent) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            edge = self._edge_at(e.position().toPoint())
+            if edge:
+                self._resize_edge = edge
+                self._resize_start_pos = e.globalPosition().toPoint()
+                self._resize_start_geom = self.geometry()
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e: QMouseEvent) -> None:
+        if self._resize_edge != Edge.NONE and self._resize_start_pos and self._resize_start_geom:
+            gp = e.globalPosition().toPoint()
+            dx = gp.x() - self._resize_start_pos.x()
+            dy = gp.y() - self._resize_start_pos.y()
+            g = QRect(self._resize_start_geom)
+            min_w, min_h = self.minimumWidth(), self.minimumHeight()
+            if Edge.LEFT in self._resize_edge:
+                new_w = g.width() - dx
+                if new_w >= min_w:
+                    g.setLeft(g.left() + dx)
+            if Edge.RIGHT in self._resize_edge:
+                new_w = g.width() + dx
+                if new_w >= min_w:
+                    g.setRight(g.right() + dx)
+            if Edge.TOP in self._resize_edge:
+                new_h = g.height() - dy
+                if new_h >= min_h:
+                    g.setTop(g.top() + dy)
+            if Edge.BOTTOM in self._resize_edge:
+                new_h = g.height() + dy
+                if new_h >= min_h:
+                    g.setBottom(g.bottom() + dy)
+            self.setGeometry(g)
+        else:
+            edge = self._edge_at(e.position().toPoint())
+            self._set_resize_cursor(edge)
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e: QMouseEvent) -> None:
+        self._resize_edge = Edge.NONE
+        self._resize_start_pos = None
+        self._resize_start_geom = None
         super().mouseReleaseEvent(e)
+
+    def _set_resize_cursor(self, edge: Edge) -> None:
+        if edge == Edge.NONE:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
+            return
+        if edge == (Edge.LEFT | Edge.TOP) or edge == (Edge.RIGHT | Edge.BOTTOM):
+            self.setCursor(QCursor(Qt.CursorShape.SizeFDiagCursor))
+        elif edge == (Edge.RIGHT | Edge.TOP) or edge == (Edge.LEFT | Edge.BOTTOM):
+            self.setCursor(QCursor(Qt.CursorShape.SizeBDiagCursor))
+        elif edge == Edge.LEFT or edge == Edge.RIGHT:
+            self.setCursor(QCursor(Qt.CursorShape.SizeHorCursor))
+        elif edge == Edge.TOP or edge == Edge.BOTTOM:
+            self.setCursor(QCursor(Qt.CursorShape.SizeVerCursor))
+        else:
+            self.setCursor(QCursor(Qt.CursorShape.ArrowCursor))
 
     def closeEvent(self, e) -> None:
         """Intercept close: hide to tray unless close_event_allowed is True."""
+        self._flush_geometry_save()
         if not self.close_event_allowed:
             e.ignore()
             self.closeRequested.emit()
@@ -680,7 +971,7 @@ class OverlayWindow(QMainWindow):
         key = e.key()
         if key == Qt.Key.Key_Escape:
             if self._stack.currentIndex() == 1:
-                self._on_settings_button_clicked()
+                self._toggle_settings()
             else:
                 self._minimize_hide()
             return

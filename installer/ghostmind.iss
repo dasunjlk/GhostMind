@@ -1,0 +1,93 @@
+; GhostMind — Inno Setup script
+; Build with: iscc installer/ghostmind.iss
+; Output: dist/GhostMind-Setup-<version>.exe
+
+#define MyAppName "GhostMind"
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.0"
+#endif
+#define MyAppPublisher "Dasun Jayasanka"
+#define MyAppURL "https://github.com/dasunjlk/GhostMind"
+#define MyAppExeName "ghostmind.exe"
+
+[Setup]
+; Relative paths (dist\, assets\, LICENSE, ...) resolve from the repo root,
+; one level above this installer\ directory.
+SourceDir=..
+; Application information
+AppId={{8E9A7D5C-3F2B-4E1A-9C8D-7F6E5A4B3C2D}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+DefaultDirName={localappdata}\GhostMind
+DefaultGroupName=GhostMind
+AllowNoIcons=yes
+; Per-user install (no admin required)
+PrivilegesRequired=lowest
+; Windows 10+ only
+MinVersion=10.0
+; x64 binary; x64compatible also allows ARM64 Windows via emulation
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+; Output settings
+OutputDir=dist
+OutputBaseFilename=GhostMind-Setup-{#MyAppVersion}
+SetupIconFile=assets\icon.ico
+; Compression
+Compression=lzma2/ultra64
+; Ask Windows to close a running GhostMind before replacing files.
+CloseApplications=yes
+; Keep install directory editable
+DisableProgramGroupPage=yes
+; Uninstaller settings
+UninstallDisplayIcon={app}\ghostmind.exe
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
+Name: "startupicon"; Description: "Start with Windows"; GroupDescription: "Startup:"; Flags: unchecked
+
+[Files]
+; Main application files — the entire PyInstaller onedir build
+Source: "dist\ghostmind\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Icon file (for uninstaller display)
+Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
+; LICENSE file (included in installer per release plan R-01)
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+; .env.example (template for users)
+Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+Name: "{group}\GhostMind"; Filename: "{app}\ghostmind.exe"
+Name: "{group}\{cm:UninstallProgram,GhostMind}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\GhostMind"; Filename: "{app}\ghostmind.exe"; Tasks: desktopicon
+
+[Registry]
+; Start with Windows — add registry entry when startupicon task is selected
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "GhostMind"; ValueData: """{app}\ghostmind.exe"""; Flags: uninsdeletevalue; Tasks: startupicon
+
+[Run]
+; Run the application after installation (optional — user can start manually)
+Filename: "{app}\ghostmind.exe"; Description: "Launch GhostMind now"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Inno removes the files it installed. Runtime data created by the app
+; (config/settings.toml, config/update_state.json, ghostmind.log) is
+; intentionally left behind per the release plan (R-01), so do NOT blanket
+; delete {app} here.
+
+[Code]
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := True;
+end;

@@ -25,12 +25,21 @@ TODO.md
 # User-specific configuration (generated on first run)
 config/settings.toml
 
+# Update checker state (U-01)
+config/update_state.json
+
+# Anonymous install id (error reporting — never shipped/exported)
+config/anonymous_id.txt
+
 # OS / IDE
 .DS_Store
 Thumbs.db
-*.spec
 .idea/
 .vscode/
 
+# Ruff linter cache
+.ruff_cache/
+
 # Whisper / model caches (optional local)
 .cache/
+qa_shots/

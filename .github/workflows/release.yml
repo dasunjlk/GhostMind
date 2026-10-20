@@ -1,0 +1,83 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Verify tag matches version.py
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $version = (python -c "from version import __version__; print(__version__)").Trim()
+          if ($tag.Trim() -ne $version) {
+            Write-Error "Tag v$tag does not match version.py ($version)"
+            exit 1
+          }
+
+      - name: Build app (PyInstaller onedir)
+        run: pyinstaller --noconfirm --clean ghostmind.spec
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=$tag" "installer\ghostmind.iss"
+
+      - name: Build portable zip
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          Compress-Archive -Path "dist\ghostmind\*" -DestinationPath "dist\GhostMind-Portable-$tag.zip"
+
+      - name: Generate SHA256SUMS
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}" -replace '^v', ''
+          $files = @(
+            "dist\GhostMind-Setup-$tag.exe",
+            "dist\GhostMind-Portable-$tag.zip"
+          )
+          $lines = foreach ($f in $files) {
+            if (-not (Test-Path $f)) { throw "Missing artifact: $f" }
+            $name = Split-Path $f -Leaf
+            $hash = (Get-FileHash -Algorithm SHA256 $f).Hash.ToLower()
+            "$hash  $name"
+          }
+          $lines | Set-Content -Encoding ascii "dist\SHA256SUMS.txt"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/GhostMind-Setup-*.exe
+            dist/GhostMind-Portable-*.zip
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          fail_on_unmatched_files: true

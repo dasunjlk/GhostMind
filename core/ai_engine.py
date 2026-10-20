@@ -11,7 +11,7 @@ import time
 from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
-from PyQt6.QtCore import QObject, pyqtSignal, QThread
+from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +19,11 @@ try:
     from groq import Groq
 except ImportError:  # pragma: no cover
     Groq = None  # type: ignore
+
+try:
+    from groq import RateLimitError  # type: ignore
+except ImportError:  # pragma: no cover
+    RateLimitError = None  # type: ignore
 
 # Supported Models
 DEFAULT_MODEL = "qwen/qwen3.8-27b"
@@ -36,7 +41,17 @@ AVAILABLE_MODELS: List[Tuple[str, str]] = [
     ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
 ]
 
+# Sentinel itemData value for the settings dropdown "＋ Add custom model…" entry.
+ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
+
 MAX_TOKENS = 1024
+
+# Approximate visible tokens in the answer viewport of the default 480x600
+# overlay at the default font (462x446 viewport -> 250). Used to scale answer
+# length with the window size (see estimate_visible_tokens).
+DEFAULT_CAPACITY = 250
+_MIN_CAPACITY_FACTOR = 0.5
+_MAX_CAPACITY_FACTOR = 2.0
 
 BASE_SYSTEM = (
     "You are GhostMind, a silent stealth AI assistant. Respond concisely, accurately, and clearly. "
@@ -45,19 +60,111 @@ BASE_SYSTEM = (
 )
 
 
+def estimate_visible_tokens(width_px: int, height_px: int, font_pt: int) -> int:
+    """Approximate how many tokens the answer viewport can show at once.
+
+    Rough model: line height ~= 1.6 x font size, ~4 characters per token, and
+    ~90px of chrome (header, buttons) that never displays answer text.
+    """
+    pt = max(8, int(font_pt))
+    line_h = pt * 1.6
+    usable_h = max(0.0, float(height_px) - 90.0)
+    lines = max(3, int(usable_h / line_h))
+    chars_per_line = max(24, int(int(width_px) / (pt * 0.6)))
+    return int(lines * chars_per_line / 4)
+
+
+def _capacity_factor(capacity: Optional[int]) -> float:
+    """Map visible capacity to a 0.5x-2x multiplier around the default size."""
+    if capacity is None or capacity <= 0:
+        return 1.0
+    return max(_MIN_CAPACITY_FACTOR, min(_MAX_CAPACITY_FACTOR, capacity / DEFAULT_CAPACITY))
+
+
+def _length_hint(capacity: Optional[int]) -> str:
+    """Prompt addendum telling the model how much room the overlay has."""
+    factor = _capacity_factor(capacity)
+    if factor >= 1.5:
+        return (
+            " The user has a large display: provide a well-developed answer - add useful "
+            "detail, steps, or examples when relevant - while following the rules above."
+        )
+    if factor <= 0.75:
+        return (
+            " The display area is small: keep the answer as compact as possible "
+            "while remaining complete."
+        )
+    return ""
+
+
+# Unambiguous quiz wording. Deliberately narrow: generic "select one" also
+# appears in essay prompts such as "Select one of the following topics...".
+_MCQ_PHRASE_RE = re.compile(
+    r"multiple[\s-]+choice"
+    r"|choose\s+(the\s+)?(correct|best)\b"
+    r"|select\s+(the\s+)?(correct|best)\b"
+)
+
+# Essay / long-answer instructions. These must be checked before option
+# structure because essay prompts commonly use (a), (b), ... sub-questions.
+_ESSAY_PATTERN_RE = re.compile(
+    r"\bessay\b"
+    r"|\blong[\s-]+answer\b"
+    r"|\bdescriptive\b"
+    r"|\bwrite\b.{0,40}\b(essay|paragraph|report|article|note)\b"
+    r"|\bdiscuss\b"
+    r"|\belaborate\b"
+    r"|\bcompare\s+and\s+contrast\b"
+    r"|\bcritically\s+(analy[sz]e|examine|evaluate)\b"
+    r"|\b(explain|describe)\s+in\s+detail\b"
+    r"|\bin\s+detail\b"
+    r"|\b\d+\s*[-–]?\s*\d*\s*words\b"
+    r"|\bword\s+limit\b"
+    r"|\b\d+\s*marks\b"
+    r"|\banswer\s+(the\s+following\s+)?(in|any)\b"
+    r"|\bjustify\b"
+    r"|\bsubstantiate\b"
+    r"|\bevaluate\b"
+)
+
+# Lettered option on its own line: "A) text", "(b) text", "C. text", "d: text".
+_MCQ_OPTION_LINE_RE = re.compile(r"(?m)^\s*[\(\[]?([a-dA-D])[\)\].:]\s+(\S.*)$")
+# Same markers inline, e.g. "Which ...? A) 1 B) 2 C) 3 D) 4".
+_MCQ_INLINE_OPTION_RE = re.compile(r"(?:^|[\s;])[\(\[]?([a-dA-D])[\)\].:]\s+\S")
+
+
+def _count_mcq_options(content: str) -> int:
+    """Count distinct lettered options that look like answer choices."""
+    letters = set()
+    for match in _MCQ_OPTION_LINE_RE.finditer(content):
+        text = match.group(2).strip()
+        if len(text) <= 80 and not text.endswith("?"):
+            letters.add(match.group(1).lower())
+    return len(letters)
+
+
+def _count_inline_mcq_options(content: str) -> int:
+    return len({m.group(1).lower() for m in _MCQ_INLINE_OPTION_RE.finditer(content)})
+
+
 def _classify_screen_text(content: str) -> str:
     c = content.lower()
-    # MCQ / Quiz detection
-    mcq_patterns = [
-        r"\b[a-d]\s*[\)\.\:]",
-        r"\([a-d]\)",
-        r"\[[a-d]\]",
-        r"multiple\s+choice",
-        r"select\s+(one|the\s+best|all|correct)",
-        r"which\s+of\s+the\s+following",
-        r"true\s+or\s+false",
-    ]
-    if any(re.search(p, c) for p in mcq_patterns) or any(k in c for k in ["a)", "b)", "c)", "d)", "multiple choice", "select one"]):
+
+    # Unambiguous quiz wording wins over other cues.
+    if _MCQ_PHRASE_RE.search(c):
+        return "quiz_mcq"
+
+    # Essay / long-answer prompts (checked before option structure so that
+    # (a)/(b) sub-questions and topic lists are not treated as MCQ options).
+    if _ESSAY_PATTERN_RE.search(c):
+        return "essay"
+
+    # Inline MCQ: explicit stem plus several option markers on the same line.
+    if "which of the following" in c and _count_inline_mcq_options(c) >= 3:
+        return "quiz_mcq"
+
+    # Real option lists: at least two distinct short, non-question options.
+    if _count_mcq_options(c) >= 2:
         return "quiz_mcq"
 
     # Coding detection
@@ -75,9 +182,19 @@ def _screen_system_addon(kind: str) -> str:
     if kind == "quiz_mcq":
         return (
             " The user pasted screen text that looks like a quiz or multiple-choice question. "
-            "Identify the best answer with a short justification. Format your response strictly as:\n"
+            "If answer options are present, identify the best answer with a short justification "
+            "and format your response as:\n"
             "**Answer:** [Option Letter/Number] Option Text\n"
-            "**Explanation:** 1-2 concise sentences explaining why this is correct."
+            "**Explanation:** 1-2 concise sentences explaining why this is correct.\n"
+            "If the text is not actually multiple-choice (for example an essay or long-answer "
+            "question), ignore that format and answer the question directly and completely."
+        )
+    if kind == "essay":
+        return (
+            " The user pasted an essay or long-answer question from the screen. Answer it fully "
+            "and directly: open with a clear answer or thesis, develop the key points in short "
+            "paragraphs or bullet points, and end with a brief conclusion. Do not use "
+            "multiple-choice formatting and do not comment on the question type - just answer it."
         )
     if kind == "coding":
         return (
@@ -85,8 +202,11 @@ def _screen_system_addon(kind: str) -> str:
             "Give a correct, minimal solution or fix with code in a fenced block."
         )
     if kind == "question":
-        return " The user has a direct question in the screen text; answer it directly."
-    return " Summarize or answer based on the screen content as appropriate."
+        return " The user has a direct question in the screen text; answer it directly and completely."
+    return (
+        " If the screen text contains a question or task, answer it directly. "
+        "Otherwise, summarize the screen content as appropriate."
+    )
 
 
 def _meeting_system_block() -> str:
@@ -117,18 +237,31 @@ def _meeting_question_system_block() -> str:
     )
 
 
-def build_system_prompt(context_type: str, content: str) -> str:
+def build_system_prompt(
+    context_type: str,
+    content: str,
+    capacity: Optional[int] = None,
+) -> str:
+    if context_type == "manual":
+        # Typed question (F-01): plain system prompt, no screen/meeting framing.
+        return BASE_SYSTEM + _length_hint(capacity)
     if context_type == "meeting_audio":
-        return _meeting_system_block()
+        return _meeting_system_block() + _length_hint(capacity)
     if context_type == "meeting_question":
+        # Strict 1-3 sentence format: never hint for longer answers.
         return _meeting_question_system_block()
     if context_type in ("lecture_notes", "lecture_audio"):
-        return _lecture_system_block()
+        return _lecture_system_block() + _length_hint(capacity)
     kind = _classify_screen_text(content)
-    return BASE_SYSTEM + _screen_system_addon(kind)
+    prompt = BASE_SYSTEM + _screen_system_addon(kind)
+    if kind != "quiz_mcq":
+        prompt += _length_hint(capacity)
+    return prompt
 
 
 def build_user_message(context_type: str, content: str) -> str:
+    if context_type == "manual":
+        return content
     if context_type in ("meeting_audio", "meeting_summary"):
         return f"Transcript (may be partial):\n\n{content}"
     if context_type == "meeting_question":
@@ -138,6 +271,75 @@ def build_user_message(context_type: str, content: str) -> str:
     return f"Screen OCR text:\n\n{content}"
 
 
+def resolve_api_key(explicit: Optional[str] = None) -> str:
+    """API key lookup order: explicit argument -> keyring store -> env/.env."""
+    key = (explicit or "").strip()
+    if not key:
+        try:
+            from utils.key_store import load_key
+
+            key = load_key().strip()
+        except Exception as e:
+            logger.warning("key_store load failed: %s", e)
+    if not key:
+        key = os.environ.get("GROQ_API_KEY", "").strip()
+    return key
+
+
+_NO_KEY_MSG = (
+    "No API key found. Open Settings -> API, paste your free key "
+    "from https://console.groq.com, then Save."
+)
+
+
+def _classify_api_error(err: Exception) -> str:
+    """Map a Groq client exception to a short, actionable user message."""
+    text = str(err).lower()
+    if (
+        "401" in text
+        or "invalid_api_key" in text
+        or "invalid api key" in text
+        or "unauthorized" in text
+    ):
+        return "API key was rejected - invalid or revoked. Double-check the key from https://console.groq.com"
+    if any(
+        s in text
+        for s in ("connection", "timed out", "timeout", "getaddrinfo", "unreachable", "failed to resolve")
+    ):
+        return "Network error reaching Groq. Check your internet connection and try again."
+    return f"Groq error: {str(err)[:200]}"
+
+
+def validate_key_and_model(
+    api_key: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bool, str]:
+    """Verify the API key works AND that `model_id` is available to it.
+
+    Uses one cheap `models.list` call (no chat completion, no token usage).
+    Returns (ok, human-readable message) — never raises.
+    """
+    load_dotenv()
+    key = resolve_api_key(api_key)
+    if not key:
+        return False, _NO_KEY_MSG
+    if Groq is None:
+        return False, "groq package is not installed. Install it with: pip install groq"
+    try:
+        client = Groq(api_key=key)
+        models = client.models.list()
+        ids = {m.id for m in (getattr(models, "data", None) or [])}
+    except Exception as e:
+        return False, _classify_api_error(e)
+    model = (model_id or MODEL_ID).strip()
+    if ids and model not in ids:
+        return False, (
+            f"Model '{model}' is not available with this API key. "
+            "Pick a model from the list, or check the exact ID at https://console.groq.com/docs/models"
+        )
+    return True, f"API key works - '{model}' is ready."
+
+
 def _get_client() -> Groq:
     load_dotenv()
     if Groq is None:
@@ -145,53 +347,63 @@ def _get_client() -> Groq:
             "groq package is not installed.\n"
             "Install it with: pip install groq"
         )
-    key = os.environ.get("GROQ_API_KEY", "").strip()
+    key = resolve_api_key()
     if not key:
-        raise RuntimeError(
-            "GROQ_API_KEY is not set.\n"
-            "Get a free key at https://console.groq.com and add it to your .env file."
-        )
+        raise RuntimeError(_NO_KEY_MSG)
     return Groq(api_key=key)
 
 
-def get_token_limit_for_context(context_type: str, content: str) -> int:
-    """Choose optimal max_tokens to minimize latency."""
+def get_token_limit_for_context(
+    context_type: str,
+    content: str,
+    capacity: Optional[int] = None,
+) -> int:
+    """Choose optimal max_tokens to minimize latency.
+
+    `capacity` is the estimated visible tokens in the answer viewport; when
+    given, the per-context base limit scales by 0.5x-2x with it.
+    """
     if context_type == "meeting_question":
-        return 350
-    kind = _classify_screen_text(content)
-    if kind == "quiz_mcq":
-        return 450
-    if context_type in ("lecture_notes", "lecture_audio", "meeting_summary"):
-        return 1200
-    return MAX_TOKENS
+        base = 350
+    else:
+        kind = _classify_screen_text(content)
+        if kind == "quiz_mcq":
+            base = 450
+        elif context_type in ("lecture_notes", "lecture_audio", "meeting_summary"):
+            base = 1200
+        else:
+            base = MAX_TOKENS
+    limit = int(base * _capacity_factor(capacity))
+    return max(max(180, base // 2), min(2048, limit))
 
 
 async def generate_answer(
     content: str,
     context_type: str = "screen",
     model_id: Optional[str] = None,
+    capacity: Optional[int] = None,
 ) -> str:
     """Async API call (non-streaming); used for tests or direct await."""
     client = _get_client()
-    system = build_system_prompt(context_type, content)
+    system = build_system_prompt(context_type, content, capacity)
     user_msg = build_user_message(context_type, content)
-    max_tokens = get_token_limit_for_context(context_type, content)
+    max_tokens = get_token_limit_for_context(context_type, content, capacity)
     primary = model_id or MODEL_ID
     models_to_try = [primary] + [m for m in BACKUP_MODELS if m != primary]
     last_err: Optional[Exception] = None
 
     for model in models_to_try:
         try:
+            # to_thread forwards kwargs, so no closure over the loop var is needed.
             msg = await asyncio.to_thread(
-                lambda: client.chat.completions.create(
-                    model=model,
-                    max_tokens=max_tokens,
-                    temperature=0.3,
-                    messages=[
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": user_msg},
-                    ],
-                )
+                client.chat.completions.create,
+                model=model,
+                max_tokens=max_tokens,
+                temperature=0.3,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user_msg},
+                ],
             )
             return (msg.choices[0].message.content or "").strip()
         except Exception as e:
@@ -206,6 +418,35 @@ async def generate_answer(
     return ""
 
 
+def _is_rate_limit_error(err: Exception) -> bool:
+    """Return True if the exception looks like an HTTP 429 rate-limit error."""
+    if RateLimitError is not None and isinstance(err, RateLimitError):
+        return True
+    response = getattr(err, "response", None)
+    if getattr(response, "status_code", None) == 429:
+        return True
+    text = str(err).lower()
+    return "429" in text or "rate limit" in text
+
+
+def _rate_limit_backoff(err: Exception, attempt: int) -> float:
+    """Seconds to wait before retrying after a rate-limit error.
+
+    Honors the server's Retry-After header when present; otherwise backs off
+    exponentially (1s, 2s, 4s, ...). Always capped at 30s.
+    """
+    delay = float(2 ** max(0, attempt - 1))
+    response = getattr(err, "response", None)
+    headers = getattr(response, "headers", None) or {}
+    retry_after = headers.get("retry-after") or headers.get("Retry-After")
+    if retry_after is not None:
+        try:
+            delay = max(delay, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+    return min(delay, 30.0)
+
+
 class AiStreamWorker(QThread):
     chunk_received = pyqtSignal(str)
     finished_ok = pyqtSignal()
@@ -216,12 +457,14 @@ class AiStreamWorker(QThread):
         content: str,
         context_type: str,
         model_id: Optional[str] = None,
+        capacity: Optional[int] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._content = content
         self._context_type = context_type
         self._model_id = model_id or MODEL_ID
+        self._capacity = capacity
 
     def run(self) -> None:
         try:
@@ -230,20 +473,20 @@ class AiStreamWorker(QThread):
             self.failed.emit(str(e))
             return
 
-        system = build_system_prompt(self._context_type, self._content)
+        system = build_system_prompt(self._context_type, self._content, self._capacity)
         user_msg = build_user_message(self._context_type, self._content)
         messages = [
             {"role": "system", "content": system},
             {"role": "user", "content": user_msg},
         ]
-        max_tokens = get_token_limit_for_context(self._context_type, self._content)
+        max_tokens = get_token_limit_for_context(self._context_type, self._content, self._capacity)
 
         models_to_try = [self._model_id] + [m for m in BACKUP_MODELS if m != self._model_id]
         last_err: Optional[Exception] = None
 
         for model in models_to_try:
             attempts = 0
-            while attempts < 2:
+            while attempts < 4:  # 1 initial + up to 3 rate-limit retries
                 attempts += 1
                 try:
                     stream = client.chat.completions.create(
@@ -265,6 +508,15 @@ class AiStreamWorker(QThread):
                     if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
                         logger.warning("Model %s not found/accessible, trying next model...", model)
                         break
+                    if _is_rate_limit_error(e):
+                        if attempts > 3:
+                            break  # give up on this model after the initial try + 3 retries
+                        delay = _rate_limit_backoff(e, attempts)
+                        logger.warning("Rate limited on %s; retrying in %.1fs", model, delay)
+                        if delay > 3:
+                            self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                        time.sleep(delay)
+                        continue
                     # Fallback: non-streaming request
                     try:
                         resp = client.chat.completions.create(
@@ -284,6 +536,15 @@ class AiStreamWorker(QThread):
                         err_str2 = str(e2).lower()
                         if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
                             break
+                        if _is_rate_limit_error(e2):
+                            if attempts > 3:
+                                break
+                            delay = _rate_limit_backoff(e2, attempts)
+                            logger.warning("Rate limited (non-stream) on %s; retrying in %.1fs", model, delay)
+                            if delay > 3:
+                                self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
+                            time.sleep(delay)
+                            continue
                     time.sleep(0.3 * attempts)
 
         self.failed.emit(str(last_err) if last_err else "Unknown API error")

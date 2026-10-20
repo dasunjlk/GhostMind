@@ -1,0 +1,49 @@
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv", "qa_shots", "build", "dist"]
+
+[tool.ruff.lint]
+# Defaults (E4, E7, E9, F) plus bugbear, flake8-simplify and naming rules.
+select = [
+    "E",    # pycodestyle errors (syntax, undefined names, unused vars)
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (real bug patterns)
+    "I",    # isort (consistent import order)
+    "B",    # bugbear (common footguns like loop-variable closures)
+    "N",    # pep8-naming
+    "RUF",  # ruff-specific (stale noqa, etc.)
+    "PLR",  # refactor suggestions (manual-manual aliases etc.)
+    "PIE",  # misc simplifications
+]
+
+ignore = [
+    # --- style opinions, deliberately off ---
+    "UP006", "UP035", "UP037", "UP045",  # typing.Dict/List/Optional -> builtin generics;
+                                         # codebase targets readable 3.10-style annotations
+                                         # via `from __future__ import annotations`
+    "BLE001",  # blind `except Exception`: deliberate app-wide resilience policy
+               # (a GUI app must never crash on a background task); each site
+               # logs or degrades gracefully
+    "S110",    # try-except-pass: same resilience policy in audio/hotkey polling loops
+    "DTZ005", "DTZ006",  # naive datetimes are LOCAL-time on purpose (transcript
+                         # filenames and timestamps are user-facing wall clock)
+    "PLR0402", # `from x import y` vs `import x.y`: manual aliases read fine
+    "PLR2004", # magic numbers are idiomatic in Qt geometry/paint code
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",  # complexity thresholds:
+               # Qt wiring code (main.py, overlay, settings) is legitimately long;
+               # refactor-candidate review happens at PR time, not lint time
+    "PLR1714", # repeated-comparison merge: the `edge == A or edge == B` form is
+               # more readable in the resize-grip code
+    "RUF001", "RUF002", "RUF003",  # unicode characters in strings (…, —, •) are
+               # intentional typography in this app's user-facing text
+    "E501",    # line length stays advisory; formatter handles it, reviewer enforces it
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Qt overrides REQUIRE the exact capitalized names (showEvent, mousePressEvent, ...),
+# and Qt signals are camelCase by convention (closeRequested, settings_changed aside).
+"ui/*" = ["N802", "N815"]
+# Test fakes mirror Qt APIs (isRunning) and use class-attr lists as mocks.
+"tests/*" = ["N802", "PLR0402"]
+"scripts/*" = ["E402"]  # sys.path bootstrap must precede imports

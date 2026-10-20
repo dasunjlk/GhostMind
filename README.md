@@ -1,6 +1,6 @@
 # GhostMind
 
-GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **Llama 3.1 70B** (via Groq) for concise answers inside the app.
+GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **qwen3.8-27B** (via Groq) for concise answers inside the app.
 
 ## Features
 
@@ -8,18 +8,22 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - Windows extended styles: tool window (no taskbar / Alt+Tab entry), optional click-through
 - `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` for capture exclusion; optional `DWMWA_CLOAK` via settings
 - Screen capture across monitors (`mss`) + Tesseract OCR + optional OpenCV preprocessing
-- Local speech-to-text with **faster-whisper**; optional WASAPI loopback for system audio
 - **qwen3.8-27B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
-- Default model will be **qwen3.8-27B** as a backup **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** model are vailable.
+- Default model is **qwen3.8-27B**, with **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** backups available.
 - Global hotkeys via the `keyboard` library
-- System tray icon with context menu (show/hide/export/quit)
-- Transcript export to `.txt` or `.md`
+- System tray icon (show/hide; quit)
 - Settings import/export (JSON)
 - Auto-start on Windows login
 - File logging with rotation (`ghostmind.log`)
+- Anonymous error reporting to Sentry (stack traces + app context only; no transcripts, questions, usernames, or hostnames — disable with `GHOSTMIND_NO_TELEMETRY=1`)
 - Startup dependency check with friendly warnings
 - Keyboard navigation (Escape, Tab, Backtab)
 - Settings stored in `config/settings.toml` (created on first save; file is gitignored)
+
+> **v1.0 scope:** screen-scan answers and typed questions. Audio capture
+> (subtitles/meeting answers) and transcript export are fully built but hidden in
+> v1.0 and return in a future update — their UI, hotkeys (`Ctrl+Shift+T` /
+> `Ctrl+Shift+E`), and settings rows are reserved accordingly.
 
 ## Prerequisites
 
@@ -30,7 +34,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
   Install example (Chocolatey): `choco install tesseract`  
   Or download from: https://github.com/UB-Mannheim/tesseract/wiki
 
-- **Groq API key** in `.env` as `GROQ_API_KEY` (free tier available at [console.groq.com](https://console.groq.com))
+- **Groq API key** — free tier available at [console.groq.com](https://console.groq.com). Paste it in the app under **Settings → API** (stored securely in Windows Credential Manager), or set `GROQ_API_KEY` in `.env` as a fallback.
 
 ### Optional: faster GPU for Whisper
 
@@ -44,9 +48,9 @@ cd GhostMind
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-# Edit .env — set GROQ_API_KEY
 ```
+
+Then launch the app and paste your Groq key under **Settings → API → Save** — it persists across restarts (Windows Credential Manager, with a `config/settings.toml` plaintext fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
 
 ### Fonts (optional)
 
@@ -60,18 +64,59 @@ python main.py
 
 GhostMind checks for missing dependencies on startup and shows a warning dialog if anything is unavailable. The app still starts — just with reduced functionality.
 
+### Windows installer (end users)
+
+Grab `GhostMind-Setup-<version>.exe` from the
+[Releases page](https://github.com/dasunjlk/GhostMind/releases) and run it —
+per-user install (`%LOCALAPPDATA%\GhostMind`), no admin rights needed. The
+installer is **unsigned**, so Windows SmartScreen may show "Windows protected
+your PC" — choose *More info → Run anyway*. Optional checkboxes: desktop
+shortcut (on by default) and "Start with Windows".
+
+Uninstalling removes the app files but keeps your `config/` (API key, settings)
+and logs, so reinstalling preserves your setup.
+
+**Tesseract OCR is not bundled** (license + size); install it separately (see
+Prerequisites). Its bundled license/apache notice applies only to the copy you
+install yourself. All other third-party components are Python packages bundled
+by PyInstaller under their own licenses.
+
+### Lint & tests (development)
+
+```text
+pip install -r requirements-dev.txt
+ruff check .
+pytest -q
+```
+
 ## Usage
 
-### Hotkeys
+### Scan button & hotkeys
+
+The ⚡ **Scan** button in the overlay's header bar triggers the same action as the screen-scan hotkey — use whichever is convenient. All hotkeys remain fully functional:
+
+### Preferences
+
+Under **Settings → Preferences** you can set the app's **font size** (9–24 pt) — it applies to answers, subtitles, the question input, and the general UI, including already-rendered answers. More appearance options will land here in future updates.
+
+### Audio capture quick toggles *(hidden in v1.0)*
+
+Next to the Scan button, two small icons will let you enable/disable audio sources without opening Settings — click to toggle:
+
+- 🎙 **Microphone capture** — shows a red slash when off (Zoom-style); if your system has no microphone at all, the icon shows an amber "❗" warning badge instead
+- 🔊 **System audio capture** — same slash treatment
+
+Enable either one alone, both together, or neither. Changes take effect immediately (same as saving on the Audio tab); the icons stay in sync with the Audio tab checkboxes. Both icons and the audio pipeline ship hidden in v1.0 (see v1.0 scope above).
 
 | Action | Default hotkey |
 |--------|----------------|
 | Toggle overlay visibility | `Ctrl+Shift+G` |
 | Trigger screen OCR + AI | `Ctrl+Shift+S` |
 | Clear answers | `Ctrl+Shift+C` |
-| Switch Answers ↔ Subtitles tab | `Ctrl+Shift+T` |
-| Export transcript | `Ctrl+Shift+E` |
+| Switch Answers ↔ Subtitles tab *(hidden in v1.0)* | `Ctrl+Shift+T` |
+| Export transcript *(hidden in v1.0)* | `Ctrl+Shift+E` |
 | Toggle click-through mode | `Ctrl+Shift+X` |
+| Focus the question input box | `Ctrl+Shift+Q` |
 
 ### Keyboard Navigation
 
@@ -83,14 +128,14 @@ GhostMind checks for missing dependencies on startup and shows a warning dialog 
 
 ### Tabs
 
-- **Answers** tab: shows streamed Llama output with copy per block.
-- **Subtitles** tab: rolling transcript (`Mic:` / `System:`). Lines containing `?` or question keywords schedule a short debounce, then the recent transcript is sent to Llama as **meeting** context.
+- **Answers** tab: shows streamed AI answers with copy per block.
+- **Subtitles** tab *(hidden in v1.0)*: rolling transcript (`Mic:` / `System:`). Lines containing `?` or question keywords schedule a short debounce, then the recent transcript is sent to the AI as **meeting** context.
 
 ### System Tray
 
 The green "G" icon lives in the system tray. Right-click for:
 - Show/Hide overlay
-- Export transcript
+- Export transcript *(hidden in v1.0)*
 - Quit
 
 Double-click the tray icon to toggle overlay visibility.
@@ -99,12 +144,14 @@ Double-click the tray icon to toggle overlay visibility.
 
 Click the **green dot** in the header to open settings. Configure:
 - Monitor selection, scan mode (manual/auto), opacity
-- Click-through mode, capture settings (mic/system audio)
-- Whisper model size, all hotkeys
+- Click-through mode
 - API key (with test button)
 - Import/Export settings (JSON)
 
-### Export
+Audio capture settings (mic/system, Whisper model) and the "Subtitles on Startup"
+row are present but hidden in v1.0 (see v1.0 scope above).
+
+### Export *(hidden in v1.0)*
 
 Save the full meeting transcript via:
 - `Ctrl+Shift+E` hotkey
@@ -134,13 +181,29 @@ Created when you click **Save** in settings. Keys include:
 
 Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
 
+The listening keys (`subtitles_enabled`, `capture_mic`, `capture_system`,
+`whisper_model`, `loopback_device`) are reserved for the future audio update and
+stay inactive in v1.0. Window position/size is also persisted here
+(`window_x/y/w/h`, `window_screen`).
+
+## Updates
+
+GhostMind checks GitHub **once at launch and every 6 hours** while running (cached — never more than one check per 6h window, even across restarts).
+
+- **Update available** → a popup shows the release notes. During the first **5 days** you can close it and keep using the current version ("Later" snoozes it for 24h).
+- **After 5 days** the popup can no longer be closed: use **Update Now** to download `GhostMind-Setup-<version>.exe` (SHA-256 verified against `SHA256SUMS.txt` before it runs) — the installer closes GhostMind; start GhostMind again when it finishes.
+- **Safety valve:** if downloads keep failing after the grace period (e.g. GitHub is unreachable), a **Continue for 24 hours** option appears — it re-locks after 24h. A machine that is fully offline is never locked out.
+- Fully automatic: update checking contacts only GitHub. Separately, **anonymous error reports** (scrubbed stack traces + app/OS version, identified only by a random local UUID) are sent to Sentry so bugs can be fixed in future releases — see **Security & ethics** to opt out.
+
+QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases URL, `file://` JSON works), `GHOSTMIND_FORCE_UPDATE=1`, `GHOSTMIND_GRACE_DAYS=0`.
+
 ## Troubleshooting
 
 - **`TesseractNotFoundError` / empty OCR**  
   Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
 
 - **Invalid / missing API key**  
-  Check `.env` and use **Test** in settings (or verify in the [Groq console](https://console.groq.com)). The default model used is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`.
+  Paste your key in **Settings → API** and hit **Save** — the app checks the key and model immediately and shows the problem inline. Keys are stored in Windows Credential Manager. Free keys at the [Groq console](https://console.groq.com). The default model is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`; use **＋ Add custom model…** for any other Groq model ID.
 
 
 - **No microphone or loopback device**  
@@ -213,39 +276,43 @@ Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
 
 ```text
 GhostMind/
-├── main.py                 # Entry point, controller, tray, logging
+├── main.py                 # Entry point, controller, tray, logging, updates
 ├── core/
-│   ├── ai_engine.py        # Groq API (Llama 3.1 70B) with streaming
-│   ├── audio_listener.py   # Mic/system capture + faster-whisper STT
+│   ├── ai_engine.py        # Groq API (qwen3.8-27B) streaming + prompt routing
+│   ├── audio_listener.py   # Mic/system capture + faster-whisper STT (hidden in v1.0)
 │   ├── screen_reader.py    # mss screenshot + Tesseract OCR
+│   ├── question_detect.py  # Question keyword detection (transcript)
 │   └── stealth.py          # Win32 stealth (hide from capture/taskbar)
 ├── ui/
 │   ├── overlay_window.py   # Main frameless window (drag, resize, tabs)
 │   ├── answer_panel.py     # Scrollable answer history with markdown
-│   ├── subtitle_bar.py     # Live transcript ticker with highlighting
-│   └── settings_panel.py   # In-overlay settings (all options)
+│   ├── subtitle_bar.py     # Live transcript ticker (hidden in v1.0)
+│   ├── settings_panel.py   # In-overlay settings
+│   └── update_popup.py     # Update popup + forced-update lock (U-01)
 ├── utils/
 │   ├── formatter.py        # Markdown → HTML renderer
-│   ├── hotkey_manager.py   # Global hotkeys (6 signals)
+│   ├── hotkey_manager.py   # Global hotkeys
 │   ├── autostart.py        # Windows auto-start (registry)
-│   └── config_io.py        # Settings import/export (JSON)
-├── tests/
-│   ├── test_formatter.py   # 20 formatter tests
-│   ├── test_ai_engine.py   # 16 prompt routing tests
-│   └── test_hotkey_manager.py  # 8 hotkey manager tests
+│   ├── config_io.py        # Settings import/export (JSON)
+│   ├── key_store.py        # API key storage (Windows Credential Manager)
+│   ├── updater.py          # Update check, grace state, download + SHA-256 verify
+│   └── error_reporter.py   # Anonymous error reporting (Sentry)
+├── tests/                  # pytest suite (offline; no network)
 ├── assets/
-│   ├── icon.ico            # Window/tray icon (generated)
+│   ├── icon.ico            # Window/tray icon
 │   └── fonts/              # Optional custom fonts
-├── config/
-│   └── settings.toml       # Persisted settings (gitignored)
-├── .env                    # API key (gitignored)
-├── .env.example            # Template
+├── installer/
+│   └── ghostmind.iss       # Inno Setup script
+├── config/                 # Runtime settings (gitignored)
+├── ghostmind.spec          # PyInstaller onedir build spec
+├── .github/workflows/      # CI + release automation
 ├── requirements.txt
-├── TODO.md                 # Task tracking (gitignored)
 └── ghostmind.log           # Rotating log file (gitignored)
 ```
 
 ## Security & ethics
+
+**Anonymous error reporting.** GhostMind sends crash/error reports to Sentry (stack traces, error messages, app version, OS/Python version) so bugs can be fixed in future updates. Reports never contain transcripts, questions, window contents, API keys, usernames, hostnames, or home-directory paths (all scrubbed before sending); each install is identified only by a random UUID stored in `config/anonymous_id.txt`. Disable anytime with the environment variable `GHOSTMIND_NO_TELEMETRY=1`. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`, `GHOSTMIND_TEST_ERROR=1`.
 
 GhostMind is built for legitimate personal productivity (e.g. private assistance during your own calls or content). **Bypassing exam proctoring, workplace policy, or consent rules is misuse.** You are responsible for compliance with laws, contracts, and platform terms.
 

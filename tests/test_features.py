@@ -8,13 +8,22 @@ Tests for newly added GhostMind features:
 """
 from __future__ import annotations
 
+import re
+
 import numpy as np
 import pytest
 from PyQt6.QtWidgets import QApplication
 
 import version
-from core.audio_listener import resample_to_16k, get_input_devices, find_loopback_device_index
-from core.screen_reader import get_active_window_title, detect_meeting_app, get_screen_context
+from core.audio_listener import (
+    find_loopback_device_index,
+    get_input_devices,
+    resample_to_16k,
+)
+from core.screen_reader import (
+    detect_meeting_app,
+    get_active_window_title,
+)
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
 
@@ -29,7 +38,7 @@ def qapp():
 
 class TestVersionMetadata:
     def test_version_constants(self):
-        assert version.__version__ == "1.0.0"
+        assert re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version.__version__)
         assert version.__app_name__ == "GhostMind"
         assert "Dasun" in version.__author__
         assert "dasunjlk/GhostMind" in version.__github__
@@ -38,12 +47,12 @@ class TestVersionMetadata:
 
 class TestModelConfiguration:
     def test_default_model_is_qwen38(self):
-        from core.ai_engine import DEFAULT_MODEL, AVAILABLE_MODELS, MODEL_ID
+        from core.ai_engine import DEFAULT_MODEL, MODEL_ID
         assert DEFAULT_MODEL == "qwen/qwen3.8-27b"
         assert MODEL_ID == "qwen/qwen3.8-27b"
 
     def test_backup_models_available(self):
-        from core.ai_engine import BACKUP_MODELS, AVAILABLE_MODELS
+        from core.ai_engine import AVAILABLE_MODELS, BACKUP_MODELS
         assert "qwen/qwen3.6-27b" in BACKUP_MODELS
         assert "openai/gpt-oss-120b" in BACKUP_MODELS
         assert "openai/gpt-oss-20b" in BACKUP_MODELS
@@ -119,7 +128,6 @@ class TestSettingsPanelTabs:
             "ai_model": "qwen/qwen3.8-27b",
             "whisper_model": "base",
             "loopback_device": None,
-            "font_size": 13,
             "hotkeys": {
                 "toggle_visibility": "ctrl+shift+g",
                 "screen_scan": "ctrl+shift+s",
@@ -127,28 +135,22 @@ class TestSettingsPanelTabs:
                 "toggle_subtitles": "ctrl+shift+t",
                 "export_transcript": "ctrl+shift+e",
                 "toggle_click_through": "ctrl+shift+x",
-                "ask_question": "ctrl+shift+q",
             },
         }
         panel = SettingsPanel(initial)
-        expected_tab_count = panel._tabs.count()
-        assert expected_tab_count >= 5
-        tab_names = [panel._tabs.tabText(i) for i in range(expected_tab_count)]
-        assert "General" in tab_names
-        assert "Audio" in tab_names
-        assert "Shortcuts" in tab_names
-        assert "AI & API" in tab_names
-        assert "About" in tab_names
-        assert "Preferences" in tab_names
+        assert panel._tabs.count() == 6
+        tab_names = [panel._tabs.tabText(i) for i in range(panel._tabs.count())]
+        assert tab_names == ["General", "Audio", "Shortcuts", "API", "Preferences", "About"]
+        # v1.0: the Audio tab is hidden (future-plan.md checklist)
+        assert not panel._tabs.isTabVisible(1)
 
         # Test data collection
         collected = panel.collect_data()
         assert collected["opacity"] == pytest.approx(0.85, 0.02)
         assert collected["session_type"] == "meeting"
-        assert collected["capture_system"] is True  # input says True; UI visibility is separate
+        assert collected["capture_system"] is True
         assert collected["ai_model"] == "qwen/qwen3.8-27b"
         assert "hotkeys" in collected
-        assert hasattr(panel, "_api_key_guide")
 
 
 
@@ -175,9 +177,10 @@ class TestWorkerSafety:
 
     def test_is_worker_active_deleted(self, qapp):
         from PyQt6.QtCore import QThread
+
         from ui.overlay_window import _is_worker_active
         worker = QThread()
-        # Delete underlying C++ object so isRunning() raises RuntimeError
+        # Delete underlying C++ object
         worker.deleteLater()
         qapp.processEvents()
         # Should return False safely without raising RuntimeError

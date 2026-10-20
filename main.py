@@ -15,16 +15,33 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import toml
 from dotenv import load_dotenv
-from PyQt6.QtCore import QObject, Qt, QTimer
-from PyQt6.QtGui import QAction, QGuiApplication, QIcon, QPixmap, QPainter, QColor, QPen, QFont, QFontDatabase
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QMessageBox, QSystemTrayIcon
+from PyQt6.QtCore import QObject, Qt, QThread, QTimer, QUrl, pyqtSignal
+from PyQt6.QtGui import (
+    QAction,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QFontDatabase,
+    QIcon,
+    QPainter,
+    QPen,
+    QPixmap,
+)
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+)
 
 from core.ai_engine import DEFAULT_MODEL
-from core.audio_listener import AudioListener
+from core.audio_listener import AudioListener, has_microphone
+from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
-from ui.subtitle_bar import _QUESTION_RE
+from utils import error_reporter, updater
 from utils.hotkey_manager import HotkeyManager
-
+from version import __version__
 
 
 def check_dependencies() -> List[str]:
@@ -54,17 +71,21 @@ def check_dependencies() -> List[str]:
             "  Install: pip install groq"
         )
 
-    # Groq API key: users set this themselves in Settings.
-    # We do not warn at startup — the app starts fine without it.
-    _groq_key = os.environ.get("GROQ_API_KEY", "").strip()
-    if not _groq_key:
+    # Groq API key (securely stored via keyring, or env/.env fallback)
+    groq_key = os.environ.get("GROQ_API_KEY", "").strip()
+    if not groq_key:
         try:
             from utils.key_store import load_key
 
-            _groq_key = load_key()
+            groq_key = load_key()
         except Exception:
-            _groq_key = ""
-    _ = _groq_key  # exercise the import/keyring path, but never warn here
+            groq_key = ""
+    if not groq_key:
+        warnings.append(
+            "No Groq API key found.\n"
+            "  AI answers will not work.\n"
+            "  Open Settings -> API and paste a free key from https://console.groq.com"
+        )
 
     # faster-whisper
     try:
@@ -98,6 +119,9 @@ def check_dependencies() -> List[str]:
 
     return warnings
 
+# Deep link for the one-click Tesseract install (dependency dialog, R-01).
+TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
+
 REPO_ROOT = Path(__file__).resolve().parent
 CONFIG_PATH = REPO_ROOT / "config" / "settings.toml"
 
@@ -106,16 +130,29 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "scan_mode": "manual",
     "auto_scan_interval_sec": 30,
     "opacity": 0.92,
+    # UI text size (Preferences tab; 9-24 pt)
+    "font_size": 13,
     "click_through": False,
     "dwm_cloak": False,
+    # v1.0: listening features hidden (future-plan.md hidden-features checklist)
     "subtitles_enabled": False,
     "capture_mic": False,
     "capture_system": False,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
+    # User-added model IDs from the "＋ Add custom model…" flow (API tab)
+    "custom_models": [],
 
     "whisper_model": "base",
     "loopback_device": None,
+
+    # Window geometry persistence (restored on launch, saved on move/resize/hide)
+    "window_x": None,
+    "window_y": None,
+    "window_w": 480,
+    "window_h": 600,
+    "window_screen": None,
+
     "hotkeys": {
         "toggle_visibility": "ctrl+shift+g",
         "screen_scan": "ctrl+shift+s",
@@ -123,6 +160,7 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
         "toggle_subtitles": "ctrl+shift+t",
         "export_transcript": "ctrl+shift+e",
         "toggle_click_through": "ctrl+shift+x",
+        "ask_question": "ctrl+shift+q",
     },
 }
 
@@ -200,6 +238,28 @@ def _create_tray_icon() -> QIcon:
     return QIcon(pixmap)
 
 
+class _UpdateCheckWorker(QThread):
+    """Runs the (network) update check off the GUI thread.
+
+    check_for_update can block up to ~10s on an unreachable GitHub; doing that
+    on the GUI thread would freeze the overlay at launch and every 6h.
+    """
+
+    done = pyqtSignal(object)  # Optional[updater.UpdateCheck]
+
+    def __init__(self, local_version: str, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._local_version = local_version
+
+    def run(self) -> None:
+        try:
+            result = updater.check_for_update(self._local_version)
+        except Exception as e:
+            logger.warning("Update check failed: %s", e)
+            result = None
+        self.done.emit(result)
+
+
 class GhostMindController(QObject):
     """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
@@ -210,10 +270,30 @@ class GhostMindController(QObject):
         self.overlay = OverlayWindow(self.settings, REPO_ROOT)
         self.hotkeys = HotkeyManager(self)
 
+        # Probe audio hardware once: mic icon gets a warning badge if no input
+        # device exists (Zoom-style "no microphone" indicator).
+        try:
+            mic_present = has_microphone()
+        except Exception as e:  # never let detection block startup
+            logger.warning("microphone probe failed: %s", e)
+            mic_present = False
+        self.overlay.set_microphone_available(mic_present)
+
         self._audio: Optional[AudioListener] = None
         self._meeting_timer = QTimer(self)
         self._meeting_timer.setSingleShot(True)
         self._meeting_timer.timeout.connect(self._flush_meeting_question)
+
+        # --- Updates (U-01): 6-hour re-check + lock bookkeeping ---
+        self._update_popup: Optional[Any] = None
+        self._last_update_check: Optional[Any] = None
+        self._update_locked = False
+        self._update_worker: Optional[_UpdateCheckWorker] = None
+        self._update_check_balloon = False
+        self._update_timer = QTimer(self)
+        self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
+        self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
+        self._update_timer.start()
 
         # --- System tray ---
         self._tray = QSystemTrayIcon(self)
@@ -233,6 +313,8 @@ class GhostMindController(QObject):
 
         export_action = QAction("Export transcript", self)
         export_action.triggered.connect(self.export_transcript)
+        # v1.0: transcript export hidden (future-plan.md checklist).
+        export_action.setVisible(False)
         tray_menu.addAction(export_action)
 
         tray_menu.addSeparator()
@@ -245,20 +327,32 @@ class GhostMindController(QObject):
         self._tray.activated.connect(self._on_tray_activated)
         self._tray.show()
 
+        # Tray actions hidden while the update lock is active (3.5). Transcript
+        # export is v1.0-hidden separately, so it is not part of this toggle.
+        self._tray_actions = [show_action, hide_action]
+        self._quit_action = quit_action
+        self._tray_menu = tray_menu
+        self._tray.messageClicked.connect(self._on_balloon_clicked)
+
         # Close button hides to tray instead of quitting
         self.overlay.close_event_allowed = False
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
+        self.overlay.click_through_changed.connect(self._on_header_click_through)
+        self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
         self.hotkeys.clear_answers.connect(self.overlay.clear_answers)
-        self.hotkeys.toggle_subtitles.connect(self.overlay.toggle_subtitles_tab)
-        self.hotkeys.export_transcript.connect(self.export_transcript)
+        # v1.0: subtitles + transcript export hidden (future-plan.md checklist);
+        # uncomment to rewire.
+        # self.hotkeys.toggle_subtitles.connect(self.overlay.toggle_subtitles_tab)
+        # self.hotkeys.export_transcript.connect(self.export_transcript)
         self.overlay.export_requested.connect(self.export_transcript)
         self.hotkeys.toggle_click_through.connect(self._toggle_click_through)
+        self.hotkeys.ask_question.connect(self.overlay.focus_question_input)
 
         self._register_hotkeys()
         self._start_audio_if_needed()
@@ -272,6 +366,7 @@ class GhostMindController(QObject):
             str(hk.get("toggle_subtitles", "ctrl+shift+t")),
             str(hk.get("export_transcript", "ctrl+shift+e")),
             str(hk.get("toggle_click_through", "ctrl+shift+x")),
+            str(hk.get("ask_question", "ctrl+shift+q")),
         )
 
     def _on_settings_changed(self, data: Dict[str, Any]) -> None:
@@ -281,7 +376,19 @@ class GhostMindController(QObject):
         self._register_hotkeys()
         self._start_audio_if_needed()
 
+    def _on_geometry_changed(self, geom: Dict[str, Any]) -> None:
+        """Persist window geometry.
+
+        Deliberately lightweight: saving settings on every drag must NOT go
+        through _on_settings_changed, which restarts the AudioListener.
+        """
+        self.settings.update(geom)
+        save_settings(self.settings)
+
     def _start_audio_if_needed(self) -> None:
+        # v1.0: mic/system listening is not part of the first release. Remove this
+        # guard to re-enable (see future-plan.md hidden-features checklist).
+        return
         if self._audio is not None:
             self._audio.stop_listening()
             self._audio = None
@@ -316,7 +423,7 @@ class GhostMindController(QObject):
     def _on_subtitle_line(self, line: str) -> None:
         self.overlay.push_subtitle_line(line)
         # Fast question detection based on '?' or question words
-        is_q = "?" in line or bool(_QUESTION_RE.search(line))
+        is_q = is_question(line)
         if is_q:
             self._meeting_timer.start(1200)
 
@@ -337,15 +444,23 @@ class GhostMindController(QObject):
 
     # --- tray actions ---
     def _tray_show(self) -> None:
+        if self._update_locked:
+            return  # overlay stays hidden while the update lock is active
         if not self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
 
     def _tray_hide(self) -> None:
+        if self._update_locked:
+            return
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            if self._update_locked:
+                if self._last_update_check is not None:
+                    self._show_update_popup(self._last_update_check, locked=True)
+                return
             self.overlay.toggle_visibility_animated()
 
     def _tray_quit(self) -> None:
@@ -366,6 +481,15 @@ class GhostMindController(QObject):
             QSystemTrayIcon.MessageIcon.Information,
             2000,
         )
+
+    def _on_header_click_through(self, on: bool) -> None:
+        """Header toggle changed: persist only.
+
+        Deliberately avoids _on_settings_changed, which would restart the
+        AudioListener and interrupt subtitles for a UI-only preference.
+        """
+        self.settings["click_through"] = bool(on)
+        save_settings(self.settings)
 
     # --- transcript export ---
     def export_transcript(self) -> None:
@@ -447,6 +571,129 @@ class GhostMindController(QObject):
         context_type = "meeting_question" if "?" in text else ("meeting_audio" if st == "meeting" else "lecture_notes")
         self.overlay.request_ai_answer(text, context_type)
 
+    # --- updates (U-01) -----------------------------------------------------
+
+    def initial_update_check(self) -> None:
+        """Launch-time check (deferred by a QTimer in main() so startup never blocks)."""
+        self._run_update_check(show_balloon=True)
+
+    def _run_update_check(self, show_balloon: bool = False) -> None:
+        """Start the update check in the background (never block the GUI)."""
+        if self._update_worker is not None and self._update_worker.isRunning():
+            return  # 6h timer or balloon click while a check is in flight
+        worker = _UpdateCheckWorker(__version__, self)
+        self._update_worker = worker
+        self._update_check_balloon = show_balloon
+        worker.done.connect(self._on_update_check_done)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._on_update_worker_finished)
+        worker.start()
+
+    def _on_update_worker_finished(self) -> None:
+        self._update_worker = None
+
+    def _on_update_check_done(self, result: Any) -> None:
+        if result is None:
+            return  # offline / rate-limited → silently skip (never nag, never lock)
+        self._last_update_check = result
+        if not result.update_available:
+            return
+        if self._update_check_balloon and result.first_popup_for_version:
+            self._tray.showMessage(
+                "GhostMind",
+                f"GhostMind {result.tag} available — click for details",
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            )
+        if result.locked:
+            self._enter_update_lock(result)
+        elif result.should_popup:
+            self._show_update_popup(result, locked=False)
+
+    def _show_update_popup(self, check: Any, locked: bool) -> None:
+        # Never stack popups (6h timer can fire while one is open).
+        if self._update_popup is not None and self._update_popup.isVisible():
+            return
+        from ui.update_popup import UpdatePopup
+
+        self._update_popup = UpdatePopup(check, locked=locked)
+        self._update_popup.finished.connect(self._on_update_popup_finished)
+        self._update_popup.show()
+        self._update_popup.raise_()
+        self._update_popup.activateWindow()
+
+    def _restore_from_update_lock(self) -> None:
+        """Undo _enter_update_lock (safety valve bought the user 24h)."""
+        if not self._update_locked:
+            return
+        self._update_locked = False
+        self.overlay.setEnabled(True)
+        self._register_hotkeys()
+        for act in self._tray_actions:
+            act.setVisible(True)
+        if hasattr(self, "_update_tray_action"):
+            self._update_tray_action.setVisible(False)
+        logger.info("Update lock lifted via safety valve (24h snooze)")
+
+    def _on_update_popup_finished(self, _result: int) -> None:
+        # The safety valve snoozes ~24h; if the state file now has an active
+        # snooze, restore the UI immediately instead of waiting for the next check.
+        state = updater.load_state()
+        if int(state.get("snooze_until_epoch") or 0) > time.time():
+            self._restore_from_update_lock()
+
+    def _enter_update_lock(self, check: Any) -> None:
+        """Grace expired: hide overlay, kill hotkeys, reduce tray, force popup."""
+        if self._update_locked and self._update_popup is not None and self._update_popup.isVisible():
+            return
+        self._update_locked = True
+        logger.warning("Update lock engaged (newer version %s, grace expired)", check.tag)
+        if self.overlay.isVisible():
+            self.overlay.toggle_visibility_animated()
+        self.overlay.setEnabled(False)
+        self.hotkeys.unregister_all()
+        for act in self._tray_actions:
+            act.setVisible(False)
+        if not hasattr(self, "_update_tray_action"):
+            self._tray_menu.insertSeparator(self._quit_action)
+            self._update_tray_action = QAction("Update now", self)
+            self._update_tray_action.triggered.connect(
+                lambda: self._last_update_check and self._show_update_popup(self._last_update_check, locked=True)
+            )
+            self._tray_menu.insertAction(self._quit_action, self._update_tray_action)
+        self._update_tray_action.setVisible(True)
+        self._show_update_popup(check, locked=True)
+
+    def _on_balloon_clicked(self) -> None:
+        if self._last_update_check is not None and self._last_update_check.update_available:
+            if self._last_update_check.locked or self._update_locked:
+                self._show_update_popup(self._last_update_check, locked=True)
+            else:
+                self._show_update_popup(self._last_update_check, locked=False)
+
+
+def _dependency_dialog(message: str) -> QMessageBox:
+    """Build the dependency warning dialog; caller runs .exec() to show it.
+
+    When Tesseract is the missing piece, offers a one-click "Install Tesseract
+    OCR" button that opens the official download page (release plan R-01).
+    Returned un-exec'd so tests can inspect/click buttons without blocking.
+    """
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle("GhostMind — Dependency Warnings")
+    box.setText("GhostMind detected missing dependencies.")
+    box.setInformativeText(message)
+    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+    if "Tesseract OCR not found" in message:
+        install_btn = box.addButton(
+            "Install Tesseract OCR", QMessageBox.ButtonRole.ActionRole
+        )
+        install_btn.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl(TESSERACT_URL))
+        )
+    return box
+
 
 def main() -> int:
     load_dotenv(REPO_ROOT / ".env")
@@ -457,6 +704,42 @@ def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("GhostMind")
 
+    # Anonymous error reporting (Sentry). No-op until a DSN is configured;
+    # fully disabled by GHOSTMIND_NO_TELEMETRY=1.
+    error_reporter.install(REPO_ROOT)
+
+    # Default UI font: prefer the branded faces when installed, else Segoe UI.
+    # (Individual widgets may still set their own; this is the app-wide base.)
+    _fam = {f.lower() for f in QFontDatabase.families()}
+    _preferred = next((f for f in ("Inter", "DM Sans", "JetBrains Mono", "Segoe UI")
+                       if f.lower() in _fam), None)
+    if _preferred:
+        app.setFont(QFont(_preferred, 10))
+
+    # App-wide dark-theme polish: consistent tooltips, menus, inputs, scrollbars.
+    app.setStyleSheet(
+        ""
+        "QToolTip { color:#E0E0E0; background:#1A1A1A; border:1px solid #00FF88; padding:4px; }"
+        "QMenu { background:#141414; color:#E0E0E0; border:1px solid #333; }"
+        "QMenu::item:selected { background:#162B1E; color:#00FF88; }"
+        "QComboBox { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:3px 8px; }"
+        "QComboBox QAbstractItemView { background:#141414; color:#E0E0E0;"
+        "  selection-background-color:#162B1E; selection-color:#00FF88; }"
+        "QSpinBox { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:2px 6px; }"
+        "QLineEdit { background:#141414; color:#E0E0E0; border:1px solid #333;"
+        "  border-radius:4px; padding:3px 6px; }"
+        "QPushButton { font-size:12px; }"
+        "QScrollBar:vertical { background:#111; width:8px; border:none; }"
+        "QScrollBar::handle:vertical { background:#2A5A40; border-radius:4px; min-height:24px; }"
+        "QScrollBar::handle:vertical:hover { background:#00FF88; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height:0; }"
+        "QScrollBar:horizontal { background:#111; height:8px; border:none; }"
+        "QScrollBar::handle:horizontal { background:#2A5A40; border-radius:4px; min-width:24px; }"
+        "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }"
+    )
+
     # Startup dependency check
     warnings = check_dependencies()
     if warnings:
@@ -466,12 +749,13 @@ def main() -> int:
             + "\n\n"
             "The app will start but some features may be unavailable."
         )
-        QTimer.singleShot(200, lambda: QMessageBox.warning(
-            None, "GhostMind — Dependency Warnings", msg
-        ))
+        QTimer.singleShot(200, lambda: _dependency_dialog(msg).exec())
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)
+
+    # U-01: first update check shortly after launch (network must not block startup)
+    QTimer.singleShot(1500, ctrl.initial_update_check)
 
     def _sigint(*_args) -> None:
         logger.info("SIGINT — quitting")
@@ -483,6 +767,7 @@ def main() -> int:
     timer.start(400)
 
     app.aboutToQuit.connect(ctrl.hotkeys.unregister_all)
+    app.aboutToQuit.connect(error_reporter.flush)
 
     ctrl.overlay.show()
     try:
