@@ -328,6 +328,9 @@ class GhostMindController(QObject):
         self.overlay.click_through_changed.connect(self._on_header_click_through)
         self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
+        self.overlay.install_tesseract_requested.connect(
+            self._open_tesseract_download
+        )
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -427,6 +430,9 @@ class GhostMindController(QObject):
         text = "\n".join(lines)
         context_type = "lecture_notes" if st == "lecture" else "meeting_summary"
         self.overlay.request_ai_answer(text, context_type)
+
+    def _open_tesseract_download(self) -> None:
+        QDesktopServices.openUrl(QUrl(TESSERACT_URL))
 
     # --- tray actions ---
     def _tray_show(self) -> None:
@@ -658,29 +664,6 @@ class GhostMindController(QObject):
                 self._show_update_popup(self._last_update_check, locked=False)
 
 
-def _dependency_dialog(message: str) -> QMessageBox:
-    """Build the dependency warning dialog; caller runs .exec() to show it.
-
-    When Tesseract is the missing piece, offers a one-click "Install Tesseract
-    OCR" button that opens the official download page (release plan R-01).
-    Returned un-exec'd so tests can inspect/click buttons without blocking.
-    """
-    box = QMessageBox()
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle("GhostMind — Dependency Warnings")
-    box.setText("GhostMind detected missing dependencies.")
-    box.setInformativeText(message)
-    box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    if "Tesseract OCR not found" in message:
-        install_btn = box.addButton(
-            "Install Tesseract OCR", QMessageBox.ButtonRole.ActionRole
-        )
-        install_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(TESSERACT_URL))
-        )
-    return box
-
-
 def main() -> int:
     load_dotenv(REPO_ROOT / ".env")
 
@@ -726,19 +709,15 @@ def main() -> int:
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }"
     )
 
-    # Startup dependency check
+    # Startup dependency check (shown as a non-blocking overlay banner)
     warnings = check_dependencies()
     if warnings:
-        msg = (
-            "GhostMind detected missing dependencies:\n\n"
-            + "\n\n".join(warnings)
-            + "\n\n"
-            "The app will start but some features may be unavailable."
-        )
-        QTimer.singleShot(200, lambda: _dependency_dialog(msg).exec())
+        logger.warning("Startup dependency warnings: %s", "; ".join(warnings))
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)
+    if warnings:
+        ctrl.overlay.show_dependency_warnings(warnings)
 
     # U-01: first update check shortly after launch (network must not block startup)
     QTimer.singleShot(1500, ctrl.initial_update_check)

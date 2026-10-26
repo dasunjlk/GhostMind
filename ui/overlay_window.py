@@ -51,6 +51,7 @@ from core.ai_engine import DEFAULT_MODEL, AiStreamWorker, estimate_visible_token
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
 from ui.answer_panel import AnswerPanel
+from ui.dependency_banner import DependencyBanner
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
 
@@ -279,6 +280,7 @@ class OverlayWindow(QMainWindow):
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
+    install_tesseract_requested = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -439,6 +441,13 @@ class OverlayWindow(QMainWindow):
         hl.addWidget(btn_set)
 
         root.addWidget(header)
+
+        self._dep_banner = DependencyBanner()
+        self._dep_banner.settings_requested.connect(self._open_settings_from_banner)
+        self._dep_banner.install_tesseract_requested.connect(
+            self.install_tesseract_requested.emit
+        )
+        root.addWidget(self._dep_banner)
 
         self._stack = QStackedWidget()
         self._main_page = QWidget()
@@ -652,11 +661,20 @@ class OverlayWindow(QMainWindow):
         self._visible_target = False
         self._fade_to(0.0, hide_on_finish=True)
 
+    def show_dependency_warnings(self, warnings: list[str]) -> None:
+        self._dep_banner.show_warnings(warnings)
+
+    def _open_settings_from_banner(self) -> None:
+        self._dep_banner.hide()
+        if self._stack.currentIndex() != 1:
+            self._toggle_settings()
+
     def _toggle_settings(self) -> None:
         if self._stack.currentIndex() == 1:
             self._stack.setCurrentIndex(0)
             self._settings_panel.hide()
         else:
+            self._dep_banner.hide()
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()

@@ -1,12 +1,15 @@
-"""Tests for the startup dependency dialog (Tesseract one-click install, R-01)."""
+"""Tests for non-blocking startup dependency warnings."""
 from __future__ import annotations
 
+from pathlib import Path
 from unittest import mock
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication
 
 import main as app_main
+from ui.dependency_banner import DependencyBanner
+from ui.overlay_window import OverlayWindow
 
 TESSERACT_MSG = (
     "Tesseract OCR not found.\n"
@@ -23,35 +26,75 @@ def qapp():
     yield app
 
 
-def _find_button(box: QMessageBox, text: str):
-    for btn in box.buttons():
-        if btn.text() == text:
-            return btn
-    return None
+class TestDependencyBanner:
+    def test_tesseract_warning_shows_install_action(self, qapp):
+        banner = DependencyBanner()
+        banner.show_warnings([TESSERACT_MSG])
+        assert not banner.isHidden()
+        assert "Tesseract OCR not found" in banner._label.text()
+        assert not banner._install_btn.isHidden()
+
+    def test_install_button_emits_request(self, qapp):
+        banner = DependencyBanner()
+        banner.show_warnings([TESSERACT_MSG])
+        calls = []
+        banner.install_tesseract_requested.connect(lambda: calls.append(True))
+        banner._install_btn.click()
+        assert calls == [True]
+
+    def test_plain_warning_hides_install_action(self, qapp):
+        banner = DependencyBanner()
+        banner.show_warnings([PLAIN_MSG])
+        assert not banner.isHidden()
+        assert banner._install_btn.isHidden()
+
+    def test_settings_and_dismiss_actions(self, qapp):
+        banner = DependencyBanner()
+        banner.show_warnings([PLAIN_MSG])
+        calls = []
+        banner.settings_requested.connect(lambda: calls.append("settings"))
+        banner.dismissed.connect(lambda: calls.append("dismissed"))
+        banner._settings_btn.click()
+        banner._dismiss_btn.click()
+        assert calls == ["settings", "dismissed"]
+        assert banner.isHidden()
+
+    def test_empty_warnings_keep_banner_hidden(self, qapp):
+        banner = DependencyBanner()
+        banner.show_warnings([])
+        assert banner.isHidden()
 
 
-class TestDependencyDialog:
-    def test_tesseract_message_adds_install_button(self, qapp):
-        box = app_main._dependency_dialog(TESSERACT_MSG)
-        btn = _find_button(box, "Install Tesseract OCR")
-        assert btn is not None, "Install button must appear for Tesseract warnings"
-        assert box.icon() == QMessageBox.Icon.Warning
+class TestOverlayDependencyBanner:
+    def test_settings_button_opens_settings_and_hides_banner(self, qapp):
+        overlay = OverlayWindow(dict(app_main.DEFAULT_SETTINGS), Path("."))
+        try:
+            overlay.show_dependency_warnings([TESSERACT_MSG])
+            assert not overlay._dep_banner.isHidden()
+            overlay._dep_banner._settings_btn.click()
+            assert overlay._stack.currentIndex() == 1
+            assert overlay._dep_banner.isHidden()
+        finally:
+            overlay.close()
 
-    def test_install_button_opens_download_page(self, qapp):
-        box = app_main._dependency_dialog(TESSERACT_MSG)
-        btn = _find_button(box, "Install Tesseract OCR")
-        assert btn is not None
+    def test_install_action_is_forwarded_from_overlay(self, qapp):
+        overlay = OverlayWindow(dict(app_main.DEFAULT_SETTINGS), Path("."))
+        calls = []
+        overlay.install_tesseract_requested.connect(lambda: calls.append(True))
+        try:
+            overlay.show_dependency_warnings([TESSERACT_MSG])
+            overlay._dep_banner._install_btn.click()
+            assert calls == [True]
+        finally:
+            overlay.close()
+
+
+class TestTesseractAction:
+    def test_controller_opens_download_page(self, qapp):
         with mock.patch.object(app_main.QDesktopServices, "openUrl") as open_url:
-            btn.click()
+            app_main.GhostMindController._open_tesseract_download(None)
         open_url.assert_called_once()
         assert app_main.TESSERACT_URL in open_url.call_args.args[0].toString()
-
-    def test_plain_message_has_no_install_button(self, qapp):
-        box = app_main._dependency_dialog(PLAIN_MSG)
-        assert _find_button(box, "Install Tesseract OCR") is None
-        # Still a standard warning box with an OK to dismiss.
-        ok = box.button(QMessageBox.StandardButton.Ok)
-        assert ok is not None
 
 
 class TestStartupWarnings:
