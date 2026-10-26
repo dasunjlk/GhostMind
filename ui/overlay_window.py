@@ -281,6 +281,7 @@ class OverlayWindow(QMainWindow):
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
     install_tesseract_requested = pyqtSignal()
+    settings_closed = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -464,6 +465,7 @@ class OverlayWindow(QMainWindow):
         )
 
         self._answer_panel = AnswerPanel()
+        self._answer_panel.key_setup_requested.connect(self._open_api_settings)
         self._subtitle_bar = SubtitleBar()
         sub_host = QWidget()
         sl = QVBoxLayout(sub_host)
@@ -509,6 +511,7 @@ class OverlayWindow(QMainWindow):
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
+        self._settings_panel.close_requested.connect(self._close_settings)
         self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
@@ -601,8 +604,7 @@ class OverlayWindow(QMainWindow):
     def focus_question_input(self) -> None:
         """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
         if self._stack.currentIndex() == 1:
-            self._stack.setCurrentIndex(0)
-            self._settings_panel.hide()
+            self._close_settings()
         self._tabs.setCurrentIndex(0)
         if not self.isVisible():
             self.toggle_visibility_animated()
@@ -664,26 +666,43 @@ class OverlayWindow(QMainWindow):
     def show_dependency_warnings(self, warnings: list[str]) -> None:
         self._dep_banner.show_warnings(warnings)
 
-    def _open_settings_from_banner(self) -> None:
-        self._dep_banner.hide()
-        if self._stack.currentIndex() != 1:
-            self._toggle_settings()
+    def set_api_key_missing(self, missing: bool) -> None:
+        self._answer_panel.set_api_key_missing(missing)
 
-    def _toggle_settings(self) -> None:
-        if self._stack.currentIndex() == 1:
-            self._stack.setCurrentIndex(0)
-            self._settings_panel.hide()
-        else:
+    def open_settings(self, focus_api: bool = False) -> None:
+        """Show the Settings page without toggling it closed."""
+        if self._stack.currentIndex() != 1:
             self._dep_banner.hide()
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()
+        if focus_api:
+            self._settings_panel.focus_api_tab()
+        self.raise_()
+        self.activateWindow()
+
+    def _open_api_settings(self) -> None:
+        self.open_settings(focus_api=True)
+
+    def _open_settings_from_banner(self) -> None:
+        self.open_settings()
+
+    def _close_settings(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._settings_panel.hide()
+            self._stack.setCurrentIndex(0)
+        self.settings_closed.emit()
+
+    def _toggle_settings(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._close_settings()
+        else:
+            self.open_settings()
 
     def _on_settings_saved(self, data: Dict[str, Any]) -> None:
         self._settings.update(data)
         self.settings_changed.emit(dict(self._settings))
-        self._stack.setCurrentIndex(0)
-        self._settings_panel.hide()
+        self._close_settings()
 
     def _apply_auto_timer_state(self) -> None:
         if str(self._settings.get("scan_mode", "manual")) == "auto":

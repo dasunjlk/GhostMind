@@ -47,6 +47,7 @@ class _ApiTestSignals(QObject):
 class SettingsPanel(QWidget):
     saved = pyqtSignal(dict)
     opacity_preview = pyqtSignal(float)
+    close_requested = pyqtSignal()
 
     def __init__(self, initial: Dict[str, Any], parent=None) -> None:
         super().__init__(parent)
@@ -202,6 +203,7 @@ class SettingsPanel(QWidget):
         status_row.addWidget(self._clear_key_btn)
         form_api.addRow("", status_row)
         form_api.addRow("", self._check_btn)
+        self._api_tab = tab_api
 
         # 5. About Tab
         tab_about = QWidget()
@@ -283,7 +285,7 @@ class SettingsPanel(QWidget):
             "QPushButton{background:#1A1A1A;color:#CCCCCC;border:1px solid #333333;padding:7px 14px;border-radius:4px;}"
             "QPushButton:hover{background:#252525;color:#FFFFFF;}"
         )
-        close_btn.clicked.connect(self.hide)
+        close_btn.clicked.connect(lambda: self.close_requested.emit())
 
         import_btn = QPushButton("Import")
         import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -349,6 +351,11 @@ class SettingsPanel(QWidget):
     def set_click_through(self, on: bool) -> None:
         """Sync the combo when the header toggle changes click-through."""
         self._click_through.setCurrentText("on" if on else "off")
+
+    def focus_api_tab(self) -> None:
+        """Open the API tab and focus the key field (first-run CTA / tray)."""
+        self._tabs.setCurrentWidget(self._api_tab)
+        self._api_key.setFocus()
 
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)

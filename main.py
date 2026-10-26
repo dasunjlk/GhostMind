@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from core.ai_engine import DEFAULT_MODEL
+from core.ai_engine import DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
@@ -297,6 +297,10 @@ class GhostMindController(QObject):
 
         tray_menu.addSeparator()
 
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._tray_open_settings)
+        tray_menu.addAction(settings_action)
+
         export_action = QAction("Export transcript", self)
         export_action.triggered.connect(self.export_transcript)
         # v1.0: transcript export hidden (future-plan.md checklist).
@@ -315,7 +319,7 @@ class GhostMindController(QObject):
 
         # Tray actions hidden while the update lock is active (3.5). Transcript
         # export is v1.0-hidden separately, so it is not part of this toggle.
-        self._tray_actions = [show_action, hide_action]
+        self._tray_actions = [show_action, hide_action, settings_action]
         self._quit_action = quit_action
         self._tray_menu = tray_menu
         self._tray.messageClicked.connect(self._on_balloon_clicked)
@@ -331,6 +335,7 @@ class GhostMindController(QObject):
         self.overlay.install_tesseract_requested.connect(
             self._open_tesseract_download
         )
+        self.overlay.settings_closed.connect(self._refresh_api_key_cta)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -345,6 +350,7 @@ class GhostMindController(QObject):
 
         self._register_hotkeys()
         self._start_audio_if_needed()
+        self._refresh_api_key_cta()
 
     def _register_hotkeys(self) -> None:
         hk = self.settings.get("hotkeys", {})
@@ -364,6 +370,15 @@ class GhostMindController(QObject):
         self.overlay.apply_settings(self.settings)
         self._register_hotkeys()
         self._start_audio_if_needed()
+
+    def _refresh_api_key_cta(self) -> None:
+        """Show the first-run API-key call-to-action whenever no key is available."""
+        try:
+            missing = not resolve_api_key()
+        except Exception as e:
+            logger.warning("API key check failed: %s", e)
+            missing = True
+        self.overlay.set_api_key_missing(missing)
 
     def _on_geometry_changed(self, geom: Dict[str, Any]) -> None:
         """Persist window geometry.
@@ -446,6 +461,13 @@ class GhostMindController(QObject):
             return
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
+
+    def _tray_open_settings(self) -> None:
+        """Tray recovery path: show the overlay and open Settings."""
+        if self._update_locked:
+            return
+        self._tray_show()
+        self.overlay.open_settings()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
