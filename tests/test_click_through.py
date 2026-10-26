@@ -243,10 +243,90 @@ class TestHeaderClickThroughToggle:
         assert stealth_spy[-1] is False
 
 
-class TestSettingsPanelSync:
-    def test_header_toggle_updates_settings_combo(self, overlay, stealth_spy):
-        overlay._stack.setCurrentIndex(1)  # settings page open
-        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
-        assert overlay._settings_panel._click_through.currentText() == "on"
-        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+class TestClickThroughBanner:
+    def test_hidden_when_off(self, overlay):
+        assert overlay._ct_banner.isHidden()
+
+    def test_visible_when_on(self, overlay, qapp):
+        overlay.show()
+        overlay.apply_settings({"click_through": True})
+        qapp.processEvents()
+        assert overlay._ct_banner.isVisible()
+
+    def test_turn_off_button_disables(self, overlay, stealth_spy):
+        overlay.show()
+        overlay.apply_settings({"click_through": True})
+        seen: list = []
+        overlay.click_through_changed.connect(seen.append)
+        stealth_spy.clear()
+        QTest.mouseClick(overlay._ct_banner._disable_btn, Qt.MouseButton.LeftButton)
+        assert overlay._settings["click_through"] is False
+        assert overlay._click_through_toggle.is_on() is False
+        assert overlay._ct_banner.isHidden()
+        assert not overlay._click_guard_timer.isActive()
+        assert seen == [False]
+        assert stealth_spy[-1] is False
+
+    def test_banner_is_interactive_zone(self, overlay, stealth_spy, monkeypatch, qapp):
+        overlay.show()
+        overlay.apply_settings({"click_through": True})
+        qapp.processEvents()
+        banner = overlay._ct_banner
+        point = banner.mapToGlobal(QPoint(banner.width() // 2, banner.height() // 2))
+        monkeypatch.setattr(overlay_window, "_global_cursor_pos", lambda: point)
+        stealth_spy.clear()
+        overlay._update_click_guard()
+        assert overlay._click_guard_interactive is True
+        assert stealth_spy == [False]
+
+
+class TestSettingsClickThroughSafety:
+    def test_opening_settings_disables_click_through(self, overlay, stealth_spy):
+        overlay.show()
+        overlay.apply_settings({"click_through": True})
+        seen: list = []
+        overlay.click_through_changed.connect(seen.append)
+        stealth_spy.clear()
+        overlay.open_settings()
+        assert overlay._settings["click_through"] is False
+        assert overlay._click_through_toggle.is_on() is False
         assert overlay._settings_panel._click_through.currentText() == "off"
+        assert overlay._ct_banner.isHidden()
+        assert not overlay._click_guard_timer.isActive()
+        assert seen == [False]
+        assert stealth_spy[-1] is False
+
+    def test_saving_click_through_on_closes_settings_first(self, overlay, qapp):
+        overlay.show()
+        overlay.open_settings()
+        seen: list = []
+
+        def _record(settings: dict) -> None:
+            seen.append((overlay.is_settings_open(), settings["click_through"]))
+
+        overlay.settings_changed.connect(overlay.apply_settings)
+        overlay.settings_changed.connect(_record)
+        overlay._on_settings_saved({**BASE_SETTINGS, "click_through": True})
+        qapp.processEvents()
+
+        assert overlay.is_settings_open() is False
+        assert overlay._settings["click_through"] is True
+        assert overlay._click_through_toggle.is_on() is True
+        assert overlay._ct_banner.isVisible()
+        assert seen == [(False, True)]
+
+
+class TestSettingsPanelSync:
+    def test_apply_settings_updates_settings_combo(self, overlay):
+        overlay.apply_settings({"click_through": True})
+        assert overlay._settings_panel._click_through.currentText() == "on"
+        overlay.apply_settings({"click_through": False})
+        assert overlay._settings_panel._click_through.currentText() == "off"
+
+    def test_header_toggle_cannot_enable_while_settings_open(self, overlay, stealth_spy):
+        overlay._stack.setCurrentIndex(1)
+        QTest.mouseClick(overlay._click_through_toggle, Qt.MouseButton.LeftButton)
+        assert overlay._settings["click_through"] is False
+        assert overlay._click_through_toggle.is_on() is False
+        assert overlay._settings_panel._click_through.currentText() == "off"
+        assert overlay._ct_banner.isHidden()

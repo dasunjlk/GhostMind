@@ -301,6 +301,15 @@ class GhostMindController(QObject):
         settings_action.triggered.connect(self._tray_open_settings)
         tray_menu.addAction(settings_action)
 
+        self._click_through_action = QAction("Click-through: off", self)
+        self._click_through_action.setCheckable(True)
+        self._click_through_action.setToolTip(
+            "Let mouse clicks pass through the overlay (Ctrl+Shift+X). "
+            "Disabled while Settings is open."
+        )
+        self._click_through_action.triggered.connect(self._on_tray_click_through)
+        tray_menu.addAction(self._click_through_action)
+
         export_action = QAction("Export transcript", self)
         export_action.triggered.connect(self.export_transcript)
         # v1.0: transcript export hidden (future-plan.md checklist).
@@ -319,7 +328,12 @@ class GhostMindController(QObject):
 
         # Tray actions hidden while the update lock is active (3.5). Transcript
         # export is v1.0-hidden separately, so it is not part of this toggle.
-        self._tray_actions = [show_action, hide_action, settings_action]
+        self._tray_actions = [
+            show_action,
+            hide_action,
+            settings_action,
+            self._click_through_action,
+        ]
         self._quit_action = quit_action
         self._tray_menu = tray_menu
         self._tray.messageClicked.connect(self._on_balloon_clicked)
@@ -329,7 +343,7 @@ class GhostMindController(QObject):
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
-        self.overlay.click_through_changed.connect(self._on_header_click_through)
+        self.overlay.click_through_changed.connect(self._on_click_through_changed)
         self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
         self.overlay.install_tesseract_requested.connect(
@@ -351,6 +365,7 @@ class GhostMindController(QObject):
         self._register_hotkeys()
         self._start_audio_if_needed()
         self._refresh_api_key_cta()
+        self._sync_click_through_action()
 
     def _register_hotkeys(self) -> None:
         hk = self.settings.get("hotkeys", {})
@@ -370,6 +385,7 @@ class GhostMindController(QObject):
         self.overlay.apply_settings(self.settings)
         self._register_hotkeys()
         self._start_audio_if_needed()
+        self._sync_click_through_action()
 
     def _refresh_api_key_cta(self) -> None:
         """Show the first-run API-key call-to-action whenever no key is available."""
@@ -483,27 +499,57 @@ class GhostMindController(QObject):
 
     def _toggle_click_through(self) -> None:
         """Toggle click-through mode on/off with a hotkey."""
-        current = bool(self.settings.get("click_through", False))
-        new_val = not current
-        self.settings["click_through"] = new_val
-        save_settings(self.settings)
-        self.overlay.apply_settings(self.settings)
-        mode = "ON (clicks pass through)" if new_val else "OFF (clicks interact)"
-        self._tray.showMessage(
-            "GhostMind",
-            f"Click-through: {mode}",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000,
-        )
+        self._set_click_through(not bool(self.settings.get("click_through", False)))
 
-    def _on_header_click_through(self, on: bool) -> None:
-        """Header toggle changed: persist only.
+    def _on_tray_click_through(self, checked: bool) -> None:
+        self._set_click_through(bool(checked))
 
-        Deliberately avoids _on_settings_changed, which would restart the
-        AudioListener and interrupt subtitles for a UI-only preference.
-        """
+    def _set_click_through(self, on: bool) -> None:
+        if on and self.overlay.is_settings_open():
+            self._sync_click_through_action()
+            self._tray.showMessage(
+                "GhostMind",
+                "Close Settings before enabling click-through.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+            return
         self.settings["click_through"] = bool(on)
         save_settings(self.settings)
+        self.overlay.set_click_through(bool(on))
+        self._sync_click_through_action()
+        self._notify_click_through(bool(on))
+
+    def _sync_click_through_action(self) -> None:
+        on = bool(self.settings.get("click_through", False))
+        self._click_through_action.blockSignals(True)
+        self._click_through_action.setChecked(on)
+        self._click_through_action.setText(
+            "Click-through: on" if on else "Click-through: off"
+        )
+        self._click_through_action.blockSignals(False)
+        self._tray.setToolTip("GhostMind — click-through ON" if on else "GhostMind")
+
+    def _notify_click_through(self, on: bool) -> None:
+        if on:
+            message = (
+                "Click-through: ON — clicks pass through. Use the banner, "
+                "tray menu, or Ctrl+Shift+X to turn it off."
+            )
+        else:
+            message = "Click-through: OFF — clicks interact with the overlay."
+        self._tray.showMessage(
+            "GhostMind",
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            2500,
+        )
+
+    def _on_click_through_changed(self, on: bool) -> None:
+        """Overlay changed click-through: persist and sync the tray action."""
+        self.settings["click_through"] = bool(on)
+        save_settings(self.settings)
+        self._sync_click_through_action()
 
     # --- transcript export ---
     def export_transcript(self) -> None:
