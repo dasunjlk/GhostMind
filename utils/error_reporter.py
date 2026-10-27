@@ -16,8 +16,9 @@ What is NEVER sent:
 - Usernames, hostnames, and home paths are scrubbed from every string field
   (see ``scrub_text``), as are obvious secret patterns.
 
-Identity: a random UUID4 in ``config/anonymous_id.txt`` (separate from
-settings.toml so Settings export can never leak it). No other user data.
+Identity: a random UUID4 in ``config/anonymous_id.txt`` under the writable
+data root (separate from settings.toml so Settings export can never leak it).
+No other user data.
 
 Silently disabled when: no DSN is configured, GHOSTMIND_NO_TELEMETRY=1,
 or running under pytest. Everything here is exception-safe: error reporting

@@ -18,7 +18,7 @@ GhostMind is a **stealth AI overlay** for Windows. It stays above other windows 
 - Anonymous error reporting to Sentry (stack traces + app context only; no transcripts, questions, usernames, or hostnames — disable with `GHOSTMIND_NO_TELEMETRY=1`)
 - Startup dependency check with friendly warnings
 - Keyboard navigation (Escape, Tab, Backtab)
-- Settings stored in `config/settings.toml` (created on first save; file is gitignored)
+- Settings stored in `settings.toml` (installed builds use `%LOCALAPPDATA%\GhostMind\data`; source runs use `config/settings.toml`)
 
 > **v1.0 scope:** screen-scan answers and typed questions. Audio capture
 > (subtitles/meeting answers) and transcript export are fully built but hidden in
@@ -50,7 +50,7 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-Then launch the app and paste your Groq key under **Settings → API → Save** — it persists across restarts (Windows Credential Manager, with a `config/settings.toml` plaintext fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
+Then launch the app and paste your Groq key under **Settings → API → Save** — it persists across restarts (Windows Credential Manager, with a plaintext `settings.toml` fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
 
 ### Fonts (optional)
 
@@ -73,8 +73,8 @@ installer is **unsigned**, so Windows SmartScreen may show "Windows protected
 your PC" — choose *More info → Run anyway*. Optional checkboxes: desktop
 shortcut (on by default) and "Start with Windows".
 
-Uninstalling removes the app files but keeps your `config/` (API key, settings)
-and logs, so reinstalling preserves your setup.
+Uninstalling removes the app files but keeps `%LOCALAPPDATA%\GhostMind\data`
+(settings, update state, anonymous ID, logs), so reinstalling preserves your setup.
 
 **Tesseract OCR is not bundled** (license + size); install it separately (see
 Prerequisites). Its bundled license/apache notice applies only to the copy you
@@ -160,9 +160,9 @@ Save the full meeting transcript via:
 
 Choose `.txt` (plain text) or `.md` (markdown with timestamps and formatting).
 
-## Configuration (`config/settings.toml`)
+## Configuration (`settings.toml`)
 
-Created when you click **Save** in settings. Keys include:
+Installed builds store it at `%LOCALAPPDATA%\GhostMind\data\settings.toml`; when running from source it is `config/settings.toml`. Set `GHOSTMIND_DATA_DIR` to override the data directory (QA/tests). Created when you click **Save** in settings. Keys include:
 
 | Key | Meaning |
 |-----|---------|
@@ -216,7 +216,7 @@ QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases U
   Capture exclusion depends on the app honoring `WDA_EXCLUDEFROMCAPTURE`. Some tools or GPU drivers may behave differently.
 
 - **Check the log file**  
-  GhostMind writes detailed logs to `ghostmind.log` (rotating, 1MB x 3 backups). Check this file for crash diagnostics.
+  GhostMind writes detailed logs to `ghostmind.log` (rotating, 1MB x 3 backups) in `%LOCALAPPDATA%\GhostMind\data` for installed builds, or the repository root when running from source. Check this file for crash diagnostics.
 
 ## Architecture
 
@@ -303,16 +303,19 @@ GhostMind/
 │   └── fonts/              # Optional custom fonts
 ├── installer/
 │   └── ghostmind.iss       # Inno Setup script
-├── config/                 # Runtime settings (gitignored)
+├── config/                 # Source-run runtime settings (gitignored)
 ├── ghostmind.spec          # PyInstaller onedir build spec
 ├── .github/workflows/      # CI + release automation
 ├── requirements.txt
-└── ghostmind.log           # Rotating log file (gitignored)
+└── ghostmind.log           # Source-run rotating log (gitignored)
+
+Installed builds keep settings, update state, the anonymous ID, and logs in
+%LOCALAPPDATA%\GhostMind\data instead of the install directory.
 ```
 
 ## Security & ethics
 
-**Anonymous error reporting.** GhostMind sends crash/error reports to Sentry (stack traces, error messages, app version, OS/Python version) so bugs can be fixed in future updates. Reports never contain transcripts, questions, window contents, API keys, usernames, hostnames, or home-directory paths (all scrubbed before sending); each install is identified only by a random UUID stored in `config/anonymous_id.txt`. Disable anytime with the environment variable `GHOSTMIND_NO_TELEMETRY=1`. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`, `GHOSTMIND_TEST_ERROR=1`.
+**Anonymous error reporting.** GhostMind sends crash/error reports to Sentry (stack traces, error messages, app version, OS/Python version) so bugs can be fixed in future updates. Reports never contain transcripts, questions, window contents, API keys, usernames, hostnames, or home-directory paths (all scrubbed before sending); each install is identified only by a random UUID stored in the local data directory (`config/anonymous_id.txt` from source, `%LOCALAPPDATA%\GhostMind\data\config\anonymous_id.txt` when installed). Disable anytime with the environment variable `GHOSTMIND_NO_TELEMETRY=1`. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`, `GHOSTMIND_TEST_ERROR=1`.
 
 GhostMind is built for legitimate personal productivity (e.g. private assistance during your own calls or content). **Bypassing exam proctoring, workplace policy, or consent rules is misuse.** You are responsible for compliance with laws, contracts, and platform terms.
 

@@ -3,7 +3,7 @@ Secure API-key storage.
 
 Primary store: the OS credential manager via the `keyring` package
 (Windows Credential Manager on Windows — no native build needed).
-Fallback: a plaintext `[key_storage]` table inside `config/settings.toml`,
+Fallback: a plaintext `[key_storage]` table inside the active `settings.toml`,
 used only when keyring is unavailable (documented tradeoff).
 
 Order of operations (matches the release plan, R-03):
@@ -16,6 +16,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from typing import Optional, Tuple
+
+from utils import app_paths
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +45,7 @@ def _get_keyring():
 
 def _fallback_path() -> Path:
     """Plaintext fallback file (same settings.toml the app already uses)."""
-    return Path(__file__).resolve().parent.parent / "config" / "settings.toml"
+    return app_paths.settings_path()
 
 
 def is_keyring_available() -> bool:

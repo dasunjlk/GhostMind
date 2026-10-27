@@ -76,10 +76,9 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 Filename: "{app}\ghostmind.exe"; Description: "Launch GhostMind now"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
-; Inno removes the files it installed. Runtime data created by the app
-; (config/settings.toml, config/update_state.json, ghostmind.log) is
-; intentionally left behind per the release plan (R-01), so do NOT blanket
-; delete {app} here.
+; Inno removes the files it installed. Runtime data now lives outside the
+; install directory in %LOCALAPPDATA%\GhostMind\data and is intentionally
+; left behind per the release plan (R-01), so do NOT blanket delete {app} here.
 
 [Code]
 function InitializeSetup(): Boolean;
