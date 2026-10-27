@@ -51,6 +51,8 @@ from core.ai_engine import DEFAULT_MODEL, AiStreamWorker, estimate_visible_token
 from core.screen_reader import ScreenScanWorker
 from core.stealth import apply_stealth
 from ui.answer_panel import AnswerPanel
+from ui.click_through_banner import ClickThroughBanner
+from ui.dependency_banner import DependencyBanner
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
 
@@ -279,6 +281,8 @@ class OverlayWindow(QMainWindow):
     closeRequested = pyqtSignal()
     export_requested = pyqtSignal()
     summarize_meeting_requested = pyqtSignal()
+    install_tesseract_requested = pyqtSignal()
+    settings_closed = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -440,6 +444,20 @@ class OverlayWindow(QMainWindow):
 
         root.addWidget(header)
 
+        self._ct_banner = ClickThroughBanner()
+        self._ct_banner.disable_requested.connect(
+            self._disable_click_through_from_banner
+        )
+        self._ct_banner.set_active(bool(self._settings.get("click_through", False)))
+        root.addWidget(self._ct_banner)
+
+        self._dep_banner = DependencyBanner()
+        self._dep_banner.settings_requested.connect(self._open_settings_from_banner)
+        self._dep_banner.install_tesseract_requested.connect(
+            self.install_tesseract_requested.emit
+        )
+        root.addWidget(self._dep_banner)
+
         self._stack = QStackedWidget()
         self._main_page = QWidget()
         mp_lay = QVBoxLayout(self._main_page)
@@ -455,6 +473,7 @@ class OverlayWindow(QMainWindow):
         )
 
         self._answer_panel = AnswerPanel()
+        self._answer_panel.key_setup_requested.connect(self._open_api_settings)
         self._subtitle_bar = SubtitleBar()
         sub_host = QWidget()
         sl = QVBoxLayout(sub_host)
@@ -500,6 +519,7 @@ class OverlayWindow(QMainWindow):
         self._settings_panel = SettingsPanel(self._settings)
         self._settings_panel.hide()
         self._settings_panel.saved.connect(self._on_settings_saved)
+        self._settings_panel.close_requested.connect(self._close_settings)
         self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
@@ -529,7 +549,7 @@ class OverlayWindow(QMainWindow):
         self._settings_panel.apply_data(self._settings)
         self._mic_toggle.set_on(bool(self._settings.get("capture_mic", True)))
         self._sys_toggle.set_on(bool(self._settings.get("capture_system", True)))
-        self._click_through_toggle.set_on(bool(self._settings.get("click_through", False)))
+        self._sync_click_through_ui(bool(self._settings.get("click_through", False)))
         self.apply_font_size(int(self._settings.get("font_size", 13)))
         self._reapply_stealth()
 
@@ -559,10 +579,31 @@ class OverlayWindow(QMainWindow):
         Uses a dedicated signal (not settings_changed) so main.py can save the
         setting without restarting audio capture.
         """
-        self._settings["click_through"] = bool(on)
-        self._settings_panel.set_click_through(bool(on))
-        self._reapply_stealth()
+        if on and self.is_settings_open():
+            self.set_click_through(False)
+            return
+        self.set_click_through(bool(on))
         self.click_through_changed.emit(bool(on))
+
+    def set_click_through(self, on: bool) -> None:
+        """Apply click-through state to the overlay UI and window style."""
+        self._settings["click_through"] = bool(on)
+        self._sync_click_through_ui(bool(on))
+        self._reapply_stealth()
+
+    def _sync_click_through_ui(self, on: bool) -> None:
+        self._click_through_toggle.set_on(bool(on))
+        self._settings_panel.set_click_through(bool(on))
+        self._ct_banner.set_active(bool(on))
+
+    def _disable_click_through_from_banner(self) -> None:
+        if not self._click_through_enabled():
+            return
+        self.set_click_through(False)
+        self.click_through_changed.emit(False)
+
+    def is_settings_open(self) -> bool:
+        return self._stack.currentIndex() == 1
 
     def set_microphone_available(self, available: bool) -> None:
         """Show an amber "!" on the mic icon when the system has no input device."""
@@ -592,8 +633,7 @@ class OverlayWindow(QMainWindow):
     def focus_question_input(self) -> None:
         """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
         if self._stack.currentIndex() == 1:
-            self._stack.setCurrentIndex(0)
-            self._settings_panel.hide()
+            self._close_settings()
         self._tabs.setCurrentIndex(0)
         if not self.isVisible():
             self.toggle_visibility_animated()
@@ -652,20 +692,49 @@ class OverlayWindow(QMainWindow):
         self._visible_target = False
         self._fade_to(0.0, hide_on_finish=True)
 
-    def _toggle_settings(self) -> None:
-        if self._stack.currentIndex() == 1:
-            self._stack.setCurrentIndex(0)
-            self._settings_panel.hide()
-        else:
+    def show_dependency_warnings(self, warnings: list[str]) -> None:
+        self._dep_banner.show_warnings(warnings)
+
+    def set_api_key_missing(self, missing: bool) -> None:
+        self._answer_panel.set_api_key_missing(missing)
+
+    def open_settings(self, focus_api: bool = False) -> None:
+        """Show the Settings page without toggling it closed."""
+        if self._click_through_enabled():
+            self.set_click_through(False)
+            self.click_through_changed.emit(False)
+        if self._stack.currentIndex() != 1:
+            self._dep_banner.hide()
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()
+        if focus_api:
+            self._settings_panel.focus_api_tab()
+        self.raise_()
+        self.activateWindow()
+
+    def _open_api_settings(self) -> None:
+        self.open_settings(focus_api=True)
+
+    def _open_settings_from_banner(self) -> None:
+        self.open_settings()
+
+    def _close_settings(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._settings_panel.hide()
+            self._stack.setCurrentIndex(0)
+        self.settings_closed.emit()
+
+    def _toggle_settings(self) -> None:
+        if self._stack.currentIndex() == 1:
+            self._close_settings()
+        else:
+            self.open_settings()
 
     def _on_settings_saved(self, data: Dict[str, Any]) -> None:
         self._settings.update(data)
+        self._close_settings()
         self.settings_changed.emit(dict(self._settings))
-        self._stack.setCurrentIndex(0)
-        self._settings_panel.hide()
 
     def _apply_auto_timer_state(self) -> None:
         if str(self._settings.get("scan_mode", "manual")) == "auto":
@@ -764,6 +833,13 @@ class OverlayWindow(QMainWindow):
         rect = QRect(self._header.mapToGlobal(QPoint(0, 0)), self._header.size())
         return rect.contains(_global_cursor_pos())
 
+    def _pointer_in_click_through_banner(self) -> bool:
+        """True while the cursor is over the click-through recovery banner."""
+        if self._ct_banner.isHidden():
+            return False
+        rect = QRect(self._ct_banner.mapToGlobal(QPoint(0, 0)), self._ct_banner.size())
+        return rect.contains(_global_cursor_pos())
+
     def _sync_click_guard_timer(self) -> None:
         """Run the guard poll only while click-through is on and the window is shown."""
         if self._click_through_enabled() and self.isVisible():
@@ -774,7 +850,7 @@ class OverlayWindow(QMainWindow):
             self._click_guard_interactive = False
 
     def _update_click_guard(self) -> None:
-        """Keep the header / open settings panel clickable despite click-through.
+        """Keep the header, click-through banner, and open Settings clickable.
 
         The rest of the overlay stays transparent and passes clicks through.
         """
@@ -782,7 +858,11 @@ class OverlayWindow(QMainWindow):
             self._click_guard_timer.stop()
         interactive = bool(
             self.isVisible()
-            and (self._stack.currentIndex() == 1 or self._pointer_in_header())
+            and (
+                self.is_settings_open()
+                or self._pointer_in_header()
+                or self._pointer_in_click_through_banner()
+            )
         )
         if interactive != self._click_guard_interactive:
             self._click_guard_interactive = interactive

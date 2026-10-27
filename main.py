@@ -34,11 +34,11 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from core.ai_engine import DEFAULT_MODEL
+from core.ai_engine import DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
-from utils import error_reporter, updater
+from utils import app_paths, error_reporter, updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
 
@@ -109,7 +109,8 @@ def check_dependencies() -> List[str]:
 TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
 REPO_ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = REPO_ROOT / "config" / "settings.toml"
+DATA_DIR = app_paths.data_dir()
+CONFIG_PATH = app_paths.settings_path()
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "monitor_id": 1,
@@ -150,7 +151,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     },
 }
 
-LOG_PATH = REPO_ROOT / "ghostmind.log"
+LOG_PATH = app_paths.log_path()
+MIGRATED_PATHS = app_paths.migrate_legacy_data(REPO_ROOT, DATA_DIR)
 
 
 def _setup_logging() -> None:
@@ -178,6 +180,8 @@ def _setup_logging() -> None:
 
 _setup_logging()
 logger = logging.getLogger("ghostmind")
+if MIGRATED_PATHS:
+    logger.info("Migrated %d legacy data file(s) to %s", len(MIGRATED_PATHS), DATA_DIR)
 
 
 def load_settings() -> Dict[str, Any]:
@@ -297,6 +301,19 @@ class GhostMindController(QObject):
 
         tray_menu.addSeparator()
 
+        settings_action = QAction("Settings…", self)
+        settings_action.triggered.connect(self._tray_open_settings)
+        tray_menu.addAction(settings_action)
+
+        self._click_through_action = QAction("Click-through: off", self)
+        self._click_through_action.setCheckable(True)
+        self._click_through_action.setToolTip(
+            "Let mouse clicks pass through the overlay (Ctrl+Shift+X). "
+            "Disabled while Settings is open."
+        )
+        self._click_through_action.triggered.connect(self._on_tray_click_through)
+        tray_menu.addAction(self._click_through_action)
+
         export_action = QAction("Export transcript", self)
         export_action.triggered.connect(self.export_transcript)
         # v1.0: transcript export hidden (future-plan.md checklist).
@@ -315,7 +332,12 @@ class GhostMindController(QObject):
 
         # Tray actions hidden while the update lock is active (3.5). Transcript
         # export is v1.0-hidden separately, so it is not part of this toggle.
-        self._tray_actions = [show_action, hide_action]
+        self._tray_actions = [
+            show_action,
+            hide_action,
+            settings_action,
+            self._click_through_action,
+        ]
         self._quit_action = quit_action
         self._tray_menu = tray_menu
         self._tray.messageClicked.connect(self._on_balloon_clicked)
@@ -325,9 +347,13 @@ class GhostMindController(QObject):
         self.overlay.closeRequested.connect(self._tray_hide)
 
         self.overlay.settings_changed.connect(self._on_settings_changed)
-        self.overlay.click_through_changed.connect(self._on_header_click_through)
+        self.overlay.click_through_changed.connect(self._on_click_through_changed)
         self.overlay.geometry_changed.connect(self._on_geometry_changed)
         self.overlay.summarize_meeting_requested.connect(self._summarize_meeting)
+        self.overlay.install_tesseract_requested.connect(
+            self._open_tesseract_download
+        )
+        self.overlay.settings_closed.connect(self._refresh_api_key_cta)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -342,6 +368,8 @@ class GhostMindController(QObject):
 
         self._register_hotkeys()
         self._start_audio_if_needed()
+        self._refresh_api_key_cta()
+        self._sync_click_through_action()
 
     def _register_hotkeys(self) -> None:
         hk = self.settings.get("hotkeys", {})
@@ -361,6 +389,16 @@ class GhostMindController(QObject):
         self.overlay.apply_settings(self.settings)
         self._register_hotkeys()
         self._start_audio_if_needed()
+        self._sync_click_through_action()
+
+    def _refresh_api_key_cta(self) -> None:
+        """Show the first-run API-key call-to-action whenever no key is available."""
+        try:
+            missing = not resolve_api_key()
+        except Exception as e:
+            logger.warning("API key check failed: %s", e)
+            missing = True
+        self.overlay.set_api_key_missing(missing)
 
     def _on_geometry_changed(self, geom: Dict[str, Any]) -> None:
         """Persist window geometry.
@@ -428,6 +466,9 @@ class GhostMindController(QObject):
         context_type = "lecture_notes" if st == "lecture" else "meeting_summary"
         self.overlay.request_ai_answer(text, context_type)
 
+    def _open_tesseract_download(self) -> None:
+        QDesktopServices.openUrl(QUrl(TESSERACT_URL))
+
     # --- tray actions ---
     def _tray_show(self) -> None:
         if self._update_locked:
@@ -440,6 +481,13 @@ class GhostMindController(QObject):
             return
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
+
+    def _tray_open_settings(self) -> None:
+        """Tray recovery path: show the overlay and open Settings."""
+        if self._update_locked:
+            return
+        self._tray_show()
+        self.overlay.open_settings()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -455,27 +503,57 @@ class GhostMindController(QObject):
 
     def _toggle_click_through(self) -> None:
         """Toggle click-through mode on/off with a hotkey."""
-        current = bool(self.settings.get("click_through", False))
-        new_val = not current
-        self.settings["click_through"] = new_val
-        save_settings(self.settings)
-        self.overlay.apply_settings(self.settings)
-        mode = "ON (clicks pass through)" if new_val else "OFF (clicks interact)"
-        self._tray.showMessage(
-            "GhostMind",
-            f"Click-through: {mode}",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000,
-        )
+        self._set_click_through(not bool(self.settings.get("click_through", False)))
 
-    def _on_header_click_through(self, on: bool) -> None:
-        """Header toggle changed: persist only.
+    def _on_tray_click_through(self, checked: bool) -> None:
+        self._set_click_through(bool(checked))
 
-        Deliberately avoids _on_settings_changed, which would restart the
-        AudioListener and interrupt subtitles for a UI-only preference.
-        """
+    def _set_click_through(self, on: bool) -> None:
+        if on and self.overlay.is_settings_open():
+            self._sync_click_through_action()
+            self._tray.showMessage(
+                "GhostMind",
+                "Close Settings before enabling click-through.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000,
+            )
+            return
         self.settings["click_through"] = bool(on)
         save_settings(self.settings)
+        self.overlay.set_click_through(bool(on))
+        self._sync_click_through_action()
+        self._notify_click_through(bool(on))
+
+    def _sync_click_through_action(self) -> None:
+        on = bool(self.settings.get("click_through", False))
+        self._click_through_action.blockSignals(True)
+        self._click_through_action.setChecked(on)
+        self._click_through_action.setText(
+            "Click-through: on" if on else "Click-through: off"
+        )
+        self._click_through_action.blockSignals(False)
+        self._tray.setToolTip("GhostMind — click-through ON" if on else "GhostMind")
+
+    def _notify_click_through(self, on: bool) -> None:
+        if on:
+            message = (
+                "Click-through: ON — clicks pass through. Use the banner, "
+                "tray menu, or Ctrl+Shift+X to turn it off."
+            )
+        else:
+            message = "Click-through: OFF — clicks interact with the overlay."
+        self._tray.showMessage(
+            "GhostMind",
+            message,
+            QSystemTrayIcon.MessageIcon.Information,
+            2500,
+        )
+
+    def _on_click_through_changed(self, on: bool) -> None:
+        """Overlay changed click-through: persist and sync the tray action."""
+        self.settings["click_through"] = bool(on)
+        save_settings(self.settings)
+        self._sync_click_through_action()
 
     # --- transcript export ---
     def export_transcript(self) -> None:
@@ -658,29 +736,6 @@ class GhostMindController(QObject):
                 self._show_update_popup(self._last_update_check, locked=False)
 
 
-def _dependency_dialog(message: str) -> QMessageBox:
-    """Build the dependency warning dialog; caller runs .exec() to show it.
-
-    When Tesseract is the missing piece, offers a one-click "Install Tesseract
-    OCR" button that opens the official download page (release plan R-01).
-    Returned un-exec'd so tests can inspect/click buttons without blocking.
-    """
-    box = QMessageBox()
-    box.setIcon(QMessageBox.Icon.Warning)
-    box.setWindowTitle("GhostMind — Dependency Warnings")
-    box.setText("GhostMind detected missing dependencies.")
-    box.setInformativeText(message)
-    box.setStandardButtons(QMessageBox.StandardButton.Ok)
-    if "Tesseract OCR not found" in message:
-        install_btn = box.addButton(
-            "Install Tesseract OCR", QMessageBox.ButtonRole.ActionRole
-        )
-        install_btn.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl(TESSERACT_URL))
-        )
-    return box
-
-
 def main() -> int:
     load_dotenv(REPO_ROOT / ".env")
 
@@ -692,7 +747,7 @@ def main() -> int:
 
     # Anonymous error reporting (Sentry). No-op until a DSN is configured;
     # fully disabled by GHOSTMIND_NO_TELEMETRY=1.
-    error_reporter.install(REPO_ROOT)
+    error_reporter.install(DATA_DIR)
 
     # Default UI font: prefer the branded faces when installed, else Segoe UI.
     # (Individual widgets may still set their own; this is the app-wide base.)
@@ -726,19 +781,15 @@ def main() -> int:
         "QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width:0; }"
     )
 
-    # Startup dependency check
+    # Startup dependency check (shown as a non-blocking overlay banner)
     warnings = check_dependencies()
     if warnings:
-        msg = (
-            "GhostMind detected missing dependencies:\n\n"
-            + "\n\n".join(warnings)
-            + "\n\n"
-            "The app will start but some features may be unavailable."
-        )
-        QTimer.singleShot(200, lambda: _dependency_dialog(msg).exec())
+        logger.warning("Startup dependency warnings: %s", "; ".join(warnings))
 
     settings = load_settings()
     ctrl = GhostMindController(app, settings)
+    if warnings:
+        ctrl.overlay.show_dependency_warnings(warnings)
 
     # U-01: first update check shortly after launch (network must not block startup)
     QTimer.singleShot(1500, ctrl.initial_update_check)

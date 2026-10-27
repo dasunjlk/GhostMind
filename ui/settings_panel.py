@@ -47,6 +47,7 @@ class _ApiTestSignals(QObject):
 class SettingsPanel(QWidget):
     saved = pyqtSignal(dict)
     opacity_preview = pyqtSignal(float)
+    close_requested = pyqtSignal()
 
     def __init__(self, initial: Dict[str, Any], parent=None) -> None:
         super().__init__(parent)
@@ -193,7 +194,7 @@ class SettingsPanel(QWidget):
             "QPushButton{background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:6px 12px;border-radius:4px;}"
             "QPushButton:hover{background:#1E3E2B;}"
         )
-        self._check_btn.clicked.connect(self._on_test_api)
+        self._check_btn.clicked.connect(lambda: self._on_test_api())
 
         form_api.addRow("AI Model:", self._ai_model)
         form_api.addRow("Groq API Key:", self._api_key)
@@ -202,6 +203,7 @@ class SettingsPanel(QWidget):
         status_row.addWidget(self._clear_key_btn)
         form_api.addRow("", status_row)
         form_api.addRow("", self._check_btn)
+        self._api_tab = tab_api
 
         # 5. About Tab
         tab_about = QWidget()
@@ -283,7 +285,7 @@ class SettingsPanel(QWidget):
             "QPushButton{background:#1A1A1A;color:#CCCCCC;border:1px solid #333333;padding:7px 14px;border-radius:4px;}"
             "QPushButton:hover{background:#252525;color:#FFFFFF;}"
         )
-        close_btn.clicked.connect(self.hide)
+        close_btn.clicked.connect(lambda: self.close_requested.emit())
 
         import_btn = QPushButton("Import")
         import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -349,6 +351,11 @@ class SettingsPanel(QWidget):
     def set_click_through(self, on: bool) -> None:
         """Sync the combo when the header toggle changes click-through."""
         self._click_through.setCurrentText("on" if on else "off")
+
+    def focus_api_tab(self) -> None:
+        """Open the API tab and focus the key field (first-run CTA / tray)."""
+        self._tabs.setCurrentWidget(self._api_tab)
+        self._api_key.setFocus()
 
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)
@@ -524,20 +531,28 @@ class SettingsPanel(QWidget):
         if k:
             try:
                 backend = key_store.save_key(k)
-                where = (
-                    "Windows Credential Manager"
-                    if backend == "keyring"
-                    else "config/settings.toml (plaintext fallback)"
-                )
-                self._key_status.setText(f"● Key saved to {where} — checking…")
-                self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
-                self._api_key.clear()
-                self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
             except Exception as e:
-                QMessageBox.warning(self, "Key Storage Failed", str(e))
+                reason = str(e).strip() or e.__class__.__name__
+                self._tabs.setCurrentWidget(self._api_tab)
+                self._key_status.setText(f"● Could not save key: {reason}")
+                self._key_status.setStyleSheet("color:#FF5555;font-size:11px;")
+                self._api_key.setFocus()
+                return
+            where = (
+                "Windows Credential Manager"
+                if backend == "keyring"
+                else "config/settings.toml (plaintext fallback)"
+            )
+            self._key_status.setText(f"● Key saved to {where} — checking…")
+            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+            self._api_key.clear()
+            self._api_key.setPlaceholderText(
+                "•••••••••••••••• (stored — leave blank to keep)"
+            )
         self.saved.emit(d)
-        # Immediate key+model verification for what the user just chose.
-        self._on_test_api()
+        # Validate the pasted key explicitly instead of relying on the storage
+        # backend being immediately readable after the save.
+        self._on_test_api(k)
 
     def _on_clear_key(self) -> None:
         confirm = QMessageBox.question(
@@ -558,7 +573,7 @@ class SettingsPanel(QWidget):
         self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
         self._api_key.clear()
 
-    def _on_test_api(self) -> None:
+    def _on_test_api(self, api_key: str = "") -> None:
         """Verify key + model together (models.list, no token usage), inline result."""
         model = self._ai_model.currentData() or DEFAULT_MODEL
         if model == ADD_CUSTOM_MODEL_SENTINEL:
@@ -568,7 +583,7 @@ class SettingsPanel(QWidget):
                 "Choose a model from the list first, or use '＋ Add custom model…'.",
             )
             return
-        k = self._api_key.text().strip()
+        k = (api_key or self._api_key.text()).strip()
         self._key_status.setText("● Checking key and model…")
         self._key_status.setStyleSheet("color:#FFAA00;font-size:11px;")
         self._check_btn.setEnabled(False)

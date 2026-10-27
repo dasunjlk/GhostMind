@@ -151,6 +151,7 @@ class AnswerPanel(QWidget):
     """Hosts multiple answer blocks, thinking state, and clear control."""
 
     clear_clicked = pyqtSignal()
+    key_setup_requested = pyqtSignal()
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -174,6 +175,36 @@ class AnswerPanel(QWidget):
         header.addStretch(1)
         header.addWidget(clear_btn)
 
+        self._key_cta = QFrame()
+        self._key_cta.setObjectName("keySetupCta")
+        self._key_cta.setStyleSheet(
+            "#keySetupCta { background:#102018; border:1px solid #1E5A3A;"
+            " border-radius:4px; }"
+        )
+        cta_text = QLabel(
+            "<b>Add your free Groq API key</b><br>"
+            "<span style='color:#9FB3A8;'>AI answers will not work until a key is saved.</span>"
+        )
+        cta_text.setTextFormat(Qt.TextFormat.RichText)
+        cta_text.setWordWrap(True)
+        cta_text.setStyleSheet("color:#E0E0E0; font-size:11px;")
+        self._key_cta_btn = QPushButton("Add API key")
+        self._key_cta_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._key_cta_btn.setStyleSheet(
+            "QPushButton { background:#00FF88; color:#0A0A0A; border:none;"
+            " padding:5px 10px; border-radius:4px; font-size:11px; font-weight:bold; }"
+            "QPushButton:hover { background:#33FFAA; }"
+        )
+        self._key_cta_btn.clicked.connect(
+            lambda _checked=False: self.key_setup_requested.emit()
+        )
+        cta_row = QHBoxLayout(self._key_cta)
+        cta_row.setContentsMargins(8, 5, 8, 5)
+        cta_row.setSpacing(8)
+        cta_row.addWidget(cta_text, 1)
+        cta_row.addWidget(self._key_cta_btn)
+        self._key_cta.hide()
+
         self._inner = QWidget()
         self._inner_layout = QVBoxLayout(self._inner)
         self._inner_layout.setContentsMargins(0, 0, 0, 0)
@@ -192,7 +223,11 @@ class AnswerPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addLayout(header)
+        root.addWidget(self._key_cta)
         root.addWidget(self._scroll, 1)
+
+    def set_api_key_missing(self, missing: bool) -> None:
+        self._key_cta.setVisible(bool(missing))
 
     def _on_clear(self) -> None:
         self.clear_all()
