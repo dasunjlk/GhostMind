@@ -26,6 +26,8 @@ from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+from utils import app_paths
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_UPDATE_URL = "https://api.github.com/repos/dasunjlk/GhostMind/releases/latest"
@@ -34,8 +36,7 @@ DAY_SEC = 86_400
 CHECK_INTERVAL_SEC = 6 * 3_600  # in-app re-check cadence
 POPUP_SNOOZE_SEC = DAY_SEC  # "Later" hides the popup for 24h
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
-STATE_PATH = REPO_ROOT / "config" / "update_state.json"
+STATE_PATH = app_paths.update_state_path()
 
 # Consecutive failed download attempts before the 24h safety valve appears (3.6).
 MAX_CONSECUTIVE_FAILURES = 3
@@ -69,7 +70,7 @@ def is_newer(remote: str, local: str) -> bool:
 
 
 # --------------------------------------------------------------------------- #
-# State file (config/update_state.json, gitignored)
+# State file (writable app-data directory, gitignored in source runs)
 # --------------------------------------------------------------------------- #
 
 def default_state() -> Dict[str, object]:

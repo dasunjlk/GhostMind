@@ -12,13 +12,13 @@ Output: dist/ghostmind/  (one-dir folder with ghostmind.exe + all dependencies)
 
 Design notes (release plan R-01):
 - ONEDIR (not one-file): faster-whisper / sounddevice / pywin32 binaries break in one-file mode.
-- hiddenimports: covers guarded imports (faster_whisper, sounddevice, keyboard) and C extensions (win32gui, win32api).
+- hiddenimports: covers guarded imports (faster_whisper, sounddevice, keyboard), all keyring backends/metadata, and C extensions (win32gui, win32api).
 - datas: assets/ (icon.ico) + LICENSE.
 - excludes: tests/, tkinter, matplotlib (not needed at runtime).
 - console=False: GUI app, no console window.
 """
 
-from PyInstaller.utils.hooks import collect_all
+from PyInstaller.utils.hooks import collect_all, collect_submodules, copy_metadata
 
 block_cipher = None
 
@@ -41,6 +41,8 @@ _hidden_pytesseract, _data_pytesseract, _hidden_pytesseract_deps = collect_all('
 _hidden_cv2, _data_cv2, _hidden_cv2_deps = collect_all('cv2')
 _hidden_numpy, _data_numpy, _hidden_numpy_deps = collect_all('numpy')
 _hidden_sentry, _data_sentry, _hidden_sentry_deps = collect_all('sentry_sdk')
+_hidden_keyring = collect_submodules('keyring.backends')
+_data_keyring = copy_metadata('keyring')
 
 # Combine all hidden imports.
 _hiddenimports = (
@@ -51,6 +53,7 @@ _hiddenimports = (
     + _hidden_cv2_deps
     + _hidden_numpy_deps
     + _hidden_sentry_deps
+    + _hidden_keyring
     # Modules not covered by collect_all (single-file modules or C extensions).
     + [
         'win32gui',     # C extension (.pyd) — used in screen_reader + stealth.
@@ -76,6 +79,7 @@ _datas = [
     # License file (included in installer per release plan R-01).
     ('LICENSE', '.'),
 ]
+_datas += _data_keyring
 
 # ---------------------------------------------------------------------------
 # Binaries — C extensions and DLLs that need to be bundled.

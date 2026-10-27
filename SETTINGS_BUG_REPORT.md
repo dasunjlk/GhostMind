@@ -279,9 +279,11 @@ Do **not** ask her to disable antivirus or reinstall Windows; neither is indicat
 - Does Alt+Tab show a "Dependency Warnings" window? Screenshot it if possible.
 - Does the pointer icon next to the gear show a red slash (click-through on)? Does `Ctrl+Shift+X` change anything?
 - Log tail (redact any keys):
-  `%LOCALAPPDATA%\GhostMind\_internal\ghostmind.log`
+  - v1.0.2+: `%LOCALAPPDATA%\GhostMind\data\ghostmind.log`
+  - v1.0.1 and earlier: `%LOCALAPPDATA%\GhostMind\_internal\ghostmind.log`
 - Settings file (remove the `[key_storage]` section before sharing):
-  `%LOCALAPPDATA%\GhostMind\_internal\config\settings.toml`
+  - v1.0.2+: `%LOCALAPPDATA%\GhostMind\data\settings.toml`
+  - v1.0.1 and earlier: `%LOCALAPPDATA%\GhostMind\_internal\config\settings.toml`
 - A short screen recording of launch → click gear would confirm the z-order/blocking behavior.
 
 ---

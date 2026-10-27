@@ -38,7 +38,7 @@ from core.ai_engine import DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
-from utils import error_reporter, updater
+from utils import app_paths, error_reporter, updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
 
@@ -109,7 +109,8 @@ def check_dependencies() -> List[str]:
 TESSERACT_URL = "https://github.com/UB-Mannheim/tesseract/wiki"
 
 REPO_ROOT = Path(__file__).resolve().parent
-CONFIG_PATH = REPO_ROOT / "config" / "settings.toml"
+DATA_DIR = app_paths.data_dir()
+CONFIG_PATH = app_paths.settings_path()
 
 DEFAULT_SETTINGS: Dict[str, Any] = {
     "monitor_id": 1,
@@ -150,7 +151,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     },
 }
 
-LOG_PATH = REPO_ROOT / "ghostmind.log"
+LOG_PATH = app_paths.log_path()
+MIGRATED_PATHS = app_paths.migrate_legacy_data(REPO_ROOT, DATA_DIR)
 
 
 def _setup_logging() -> None:
@@ -178,6 +180,8 @@ def _setup_logging() -> None:
 
 _setup_logging()
 logger = logging.getLogger("ghostmind")
+if MIGRATED_PATHS:
+    logger.info("Migrated %d legacy data file(s) to %s", len(MIGRATED_PATHS), DATA_DIR)
 
 
 def load_settings() -> Dict[str, Any]:
@@ -743,7 +747,7 @@ def main() -> int:
 
     # Anonymous error reporting (Sentry). No-op until a DSN is configured;
     # fully disabled by GHOSTMIND_NO_TELEMETRY=1.
-    error_reporter.install(REPO_ROOT)
+    error_reporter.install(DATA_DIR)
 
     # Default UI font: prefer the branded faces when installed, else Segoe UI.
     # (Individual widgets may still set their own; this is the app-wide base.)
