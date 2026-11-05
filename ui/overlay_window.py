@@ -3,6 +3,8 @@ Main frameless always-on-top overlay: tabs, custom resize, header drag, stealth 
 """
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
 from enum import IntFlag, auto
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -266,6 +268,21 @@ class _CaptureIconWidget(QWidget):
             p.drawLine(QPointF(r.left() + 4, r.top() + 4), QPointF(right_edge - 4, bottom_edge - 4))
 
 
+MAX_AI_QUEUE = 4
+AI_QUEUE_OVERFLOW_MESSAGE = (
+    "Too many questions at once — they'll be answered one by one; "
+    "try again in a moment."
+)
+
+
+@dataclass(frozen=True)
+class _AiRequest:
+    """One queued AI request; capacity is measured when it starts."""
+
+    content: str
+    context_type: str
+
+
 def _is_worker_active(worker: Optional[QThread]) -> bool:
     """Safely check if a QThread worker is alive without triggering C++ deleted object errors."""
     if worker is None:
@@ -301,6 +318,9 @@ class OverlayWindow(QMainWindow):
         self._ai_worker: Optional[AiStreamWorker] = None
         self._scan_worker: Optional[ScreenScanWorker] = None
         self._memory = SessionMemory()
+        self._ai_queue: deque[_AiRequest] = deque()
+        self._active_worker_id: Optional[int] = None
+        self._next_worker_id = 0
         self._visible_target = True
         self.close_event_allowed = True
         self._opacity_anim: Optional[QVariantAnimation] = None
@@ -521,7 +541,11 @@ class OverlayWindow(QMainWindow):
             "QPushButton:disabled { color:#556; border-color:#556; }"
         )
         self._ask_btn.clicked.connect(self._send_manual_question)
+        self._queue_label = QLabel("")
+        self._queue_label.setStyleSheet("color:#888;font-size:11px;")
+        self._queue_label.hide()
         ask_lay.addWidget(self._ask_input, 1)
+        ask_lay.addWidget(self._queue_label)
         ask_lay.addWidget(self._ask_btn)
         mp_lay.addWidget(self._ask_row)
 
@@ -632,12 +656,29 @@ class OverlayWindow(QMainWindow):
         else:
             self._fade_to(0.0, hide_on_finish=True)
 
-    def request_ai_answer(self, content: str, context_type: str = "screen") -> None:
-        """Run Groq on arbitrary text (e.g. meeting question or transcript)."""
-        if not (content or "").strip():
-            return
+    def request_ai_answer(
+        self,
+        content: str,
+        context_type: str = "screen",
+        *,
+        echo_user: bool = False,
+    ) -> bool:
+        """Queue an AI request; returns False when the queue is full.
+
+        `echo_user` is used by the manual Ask box: the chat bubble is added
+        only after the request has been accepted into the queue.
+        """
+        text = (content or "").strip()
+        if not text:
+            return False
         self._tabs.setCurrentIndex(0)
-        self._start_ai(content.strip(), context_type)
+        if not self._enqueue_ai_request(text, context_type):
+            self._answer_panel.add_error_block(AI_QUEUE_OVERFLOW_MESSAGE)
+            return False
+        if echo_user:
+            self._answer_panel.add_user_message(text)
+        self._start_next_ai()
+        return True
 
     def focus_question_input(self) -> None:
         """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
@@ -654,22 +695,20 @@ class OverlayWindow(QMainWindow):
         text = self._ask_input.text().strip()
         if not text:
             return
-        if _is_worker_active(self._ai_worker):
-            # Send rejected: keep the typed text so nothing is lost.
-            self._answer_panel.end_stream_error("Already processing another answer.")
-            return
+        # Chat-style: echo the user's message only after a successful enqueue.
+        # Scan/OCR answers do not get this bubble — only typed messages do (F-01).
+        if not self.request_ai_answer(text, "manual", echo_user=True):
+            return  # queue full: keep the typed text so nothing is lost
         self._ask_input.clear()  # accepted: free the box for the next question
-        # Chat-style: echo the user's message in the panel. Scan/OCR answers do
-        # not get this bubble — only typed messages do (F-01).
-        self._answer_panel.add_user_message(text)
-        self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:
         if _is_worker_active(self._scan_worker):
             return
         mid = int(self._settings.get("monitor_id", 1))
         self._tabs.setCurrentIndex(0)
-        self._answer_panel.start_thinking()
+        if self._active_worker_id is None:
+            # Never reset the buffer of an answer that is still streaming.
+            self._answer_panel.start_thinking()
         self._btn_scan.setEnabled(False)
         worker = ScreenScanWorker(mid)
         self._scan_worker = worker
@@ -686,6 +725,8 @@ class OverlayWindow(QMainWindow):
         worker.start()
 
     def clear_answers(self) -> None:
+        self._ai_queue.clear()
+        self._update_queue_label()
         self._answer_panel.clear_all()
         self._memory.clear()
 
@@ -758,11 +799,15 @@ class OverlayWindow(QMainWindow):
 
     def _on_scan_done(self, text: str) -> None:
         if not text.strip():
-            self._answer_panel.end_stream_error(
+            message = (
                 "OCR returned no text. The screen may be blank or Tesseract could not read it."
             )
+            if self._active_worker_id is not None:
+                self._answer_panel.add_error_block(message)
+            else:
+                self._answer_panel.end_stream_error(message)
             return
-        self._start_ai(text, "screen")
+        self.request_ai_answer(text, "screen")
 
     def _on_scan_fail(self, err: str) -> None:
         msg = str(err)
@@ -778,16 +823,39 @@ class OverlayWindow(QMainWindow):
             )
         else:
             friendly = f"Screen scan error: {msg}"
-        self._answer_panel.end_stream_error(friendly)
+        if self._active_worker_id is not None:
+            # Never overwrite an answer that is still streaming.
+            self._answer_panel.add_error_block(friendly)
+        else:
+            self._answer_panel.end_stream_error(friendly)
+
+    def _ai_outstanding(self) -> int:
+        """Requests in flight, counting the active one."""
+        return len(self._ai_queue) + (1 if self._active_worker_id is not None else 0)
+
+    def _enqueue_ai_request(self, content: str, context_type: str) -> bool:
+        if self._ai_outstanding() >= MAX_AI_QUEUE:
+            return False
+        self._ai_queue.append(_AiRequest(content=content, context_type=context_type))
+        self._update_queue_label()
+        return True
+
+    def _start_next_ai(self) -> None:
+        if self._active_worker_id is not None:
+            return
+        if not self._ai_queue:
+            self._update_queue_label()
+            return
+        request = self._ai_queue.popleft()
+        self._update_queue_label()
+        self._start_ai(request.content, request.context_type)
+
+    def _update_queue_label(self) -> None:
+        count = len(self._ai_queue)
+        self._queue_label.setText(f"{count} queued…")
+        self._queue_label.setVisible(count > 0)
 
     def _start_ai(self, content: str, context_type: str) -> None:
-        if _is_worker_active(self._ai_worker):
-            if context_type == "meeting_audio":
-                return
-            self._answer_panel.stop_thinking()
-            self._answer_panel.end_stream_error("Already processing another answer.")
-            return
-
         remember = context_type in MEMORY_CONTEXTS
         history = self._memory.window() if remember else []
         if remember:
@@ -803,7 +871,11 @@ class OverlayWindow(QMainWindow):
             int(self._settings.get("font_size", 13)),
         )
 
-        self._answer_panel.begin_answer_stream()
+        worker_id = self._next_worker_id
+        self._next_worker_id += 1
+        self._active_worker_id = worker_id
+
+        self._answer_panel.begin_answer_stream(worker_id=worker_id)
         worker_kwargs: Dict[str, Any] = {
             "model_id": model_id,
             "capacity": capacity,
@@ -815,24 +887,42 @@ class OverlayWindow(QMainWindow):
         worker = AiStreamWorker(content, context_type, **worker_kwargs)
         self._ai_worker = worker
 
-        def _cleanup_ai() -> None:
-            if self._ai_worker is worker:
-                self._ai_worker = None
-
-        worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
-        worker.finished_ok.connect(self._on_ai_finished)
-        worker.failed.connect(self._on_ai_failed)
-        worker.finished.connect(_cleanup_ai)
+        worker.chunk_received.connect(
+            lambda chunk, wid=worker_id: self._on_ai_chunk(wid, chunk)
+        )
+        worker.finished_ok.connect(lambda wid=worker_id: self._on_ai_finished(wid))
+        worker.failed.connect(
+            lambda message, wid=worker_id: self._on_ai_failed(wid, message)
+        )
+        worker.finished.connect(
+            lambda wid=worker_id: self._on_ai_worker_finished(wid)
+        )
         worker.finished.connect(worker.deleteLater)
         worker.start()
 
-    def _on_ai_finished(self) -> None:
-        answer = self._answer_panel.end_stream_success()
+    def _on_ai_chunk(self, worker_id: int, chunk: str) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        self._answer_panel.append_stream_chunk(chunk, worker_id=worker_id)
+
+    def _on_ai_finished(self, worker_id: int) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        answer = self._answer_panel.end_stream_success(worker_id=worker_id)
         self._memory.add_answer(answer)
 
-    def _on_ai_failed(self, message: str) -> None:
+    def _on_ai_failed(self, worker_id: int, message: str) -> None:
+        if worker_id != self._active_worker_id:
+            return
         self._memory.discard_pending()
-        self._answer_panel.end_stream_error(message)
+        self._answer_panel.end_stream_error(message, worker_id=worker_id)
+
+    def _on_ai_worker_finished(self, worker_id: int) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        self._active_worker_id = None
+        self._ai_worker = None
+        self._start_next_ai()
 
 
     def _apply_window_opacity(self, op: float) -> None:
