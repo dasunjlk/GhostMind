@@ -102,6 +102,10 @@ class TestScreenSystemAddon:
         addon = _screen_system_addon("general")
         assert "summarize" in addon.lower() or "answer" in addon.lower()
 
+    def test_every_screen_addon_requires_the_question_quote(self):
+        for kind in ("quiz_mcq", "essay", "coding", "question", "general"):
+            assert "Relevant question:" in _screen_system_addon(kind)
+
 
 class TestBuildSystemPrompt:
     def test_meeting_prompt(self):
@@ -128,6 +132,22 @@ class TestBuildSystemPrompt:
     def test_prompt_contains_base_system(self):
         prompt = build_system_prompt("screen", "anything")
         assert "concise" in prompt.lower() or "clearly" in prompt.lower()
+
+    def test_screen_prompt_quotes_the_relevant_question_first(self):
+        prompt = build_system_prompt(
+            "screen",
+            "Which of the following is largest?\nA) Earth\nB) Jupiter",
+        )
+        assert "Relevant question:" in prompt
+        assert prompt.index("Relevant question:") < prompt.index("**Answer:**")
+
+    def test_non_screen_prompts_do_not_require_the_quote(self):
+        assert "Relevant question:" not in build_system_prompt(
+            "manual", "Which planet is largest?"
+        )
+        assert "Relevant question:" not in build_system_prompt(
+            "meeting_question", "Which planet is largest?"
+        )
 
 
 class TestBuildUserMessage:

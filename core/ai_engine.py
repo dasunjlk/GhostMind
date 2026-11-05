@@ -188,10 +188,19 @@ def _classify_screen_text(content: str) -> str:
     return "general"
 
 
+_QUESTION_QUOTE_INSTRUCTION = (
+    " First identify the actual question in the screen text, ignoring navigation, "
+    "cookie banners, URLs, timestamps, and other page chrome. If there is a question, "
+    "quote it in one short plain line starting exactly with 'Relevant question: ', "
+    "then answer it."
+)
+
+
 def _screen_system_addon(kind: str) -> str:
     if kind == "quiz_mcq":
         return (
-            " The user pasted screen text that looks like a quiz or multiple-choice question. "
+            _QUESTION_QUOTE_INSTRUCTION
+            + " The user pasted screen text that looks like a quiz or multiple-choice question. "
             "If answer options are present, identify the best answer with a short justification "
             "and format your response as:\n"
             "**Answer:** [Option Letter/Number] Option Text\n"
@@ -201,20 +210,26 @@ def _screen_system_addon(kind: str) -> str:
         )
     if kind == "essay":
         return (
-            " The user pasted an essay or long-answer question from the screen. Answer it fully "
+            _QUESTION_QUOTE_INSTRUCTION
+            + " The user pasted an essay or long-answer question from the screen. Answer it fully "
             "and directly: open with a clear answer or thesis, develop the key points in short "
             "paragraphs or bullet points, and end with a brief conclusion. Do not use "
             "multiple-choice formatting and do not comment on the question type - just answer it."
         )
     if kind == "coding":
         return (
-            " The user pasted a coding problem or code from the screen. "
+            _QUESTION_QUOTE_INSTRUCTION
+            + " The user pasted a coding problem or code from the screen. "
             "Give a correct, minimal solution or fix with code in a fenced block."
         )
     if kind == "question":
-        return " The user has a direct question in the screen text; answer it directly and completely."
+        return (
+            _QUESTION_QUOTE_INSTRUCTION
+            + " The user has a direct question in the screen text; answer it directly and completely."
+        )
     return (
-        " If the screen text contains a question or task, answer it directly. "
+        _QUESTION_QUOTE_INSTRUCTION
+        + " If the screen text contains a question or task, answer it directly. "
         "Otherwise, summarize the screen content as appropriate."
     )
 
