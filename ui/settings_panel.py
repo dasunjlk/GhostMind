@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
@@ -14,7 +14,6 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
-    QInputDialog,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -26,8 +25,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from core import ai_engine
 from core.ai_engine import (
-    ADD_CUSTOM_MODEL_SENTINEL,
     AVAILABLE_MODELS,
     DEFAULT_BASE_URL,
     DEFAULT_MODEL,
@@ -49,7 +48,8 @@ from version import (
 
 
 class _ApiTestSignals(QObject):
-    finished = pyqtSignal(bool, str)
+    # (ok, message, discovered model IDs)
+    finished = pyqtSignal(bool, str, list)
 
 
 class SettingsPanel(QWidget):
@@ -60,6 +60,13 @@ class SettingsPanel(QWidget):
     def __init__(self, initial: Dict[str, Any], parent=None) -> None:
         super().__init__(parent)
         self._data = dict(initial)
+        self._custom_models: List[str] = []
+        self._discovered_models: List[str] = []
+        self._discovered_for: str = ""
+        # Signature (base URL, effective key, model) of the last successful Check.
+        self._checked_values: Optional[Tuple[str, str, str]] = None
+        self._pending_check: Optional[Dict[str, Any]] = None
+        self._pending_save: Optional[Dict[str, Any]] = None
 
         # Header Title
         title = QLabel("Settings")
@@ -174,10 +181,20 @@ class SettingsPanel(QWidget):
         form_api.setContentsMargins(10, 12, 10, 12)
         form_api.setSpacing(10)
 
-        # Model dropdown: all supported models + any user-added custom IDs,
-        # plus an entry that opens the "add custom model" prompt.
+        # Base URL selects the provider; there is deliberately no provider
+        # dropdown. The model combo is editable: discovery fills it, but any
+        # typed model ID is accepted and retained.
+        self._api_base_url = QLineEdit()
+        self._api_base_url.setPlaceholderText(DEFAULT_BASE_URL)
+        self._api_base_url.setClearButtonEnabled(True)
+        self._api_base_url.editingFinished.connect(self._on_base_url_edited)
+
         self._ai_model = QComboBox()
-        self._custom_models: List[str] = []
+        self._ai_model.setEditable(True)
+        self._ai_model.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self._ai_model.setToolTip(
+            "Pick a model loaded from the provider, or type its exact model ID."
+        )
         self._populate_model_combo()
 
         self._api_key = QLineEdit()
@@ -196,16 +213,17 @@ class SettingsPanel(QWidget):
         )
         self._clear_key_btn.clicked.connect(self._on_clear_key)
 
-        self._check_btn = QPushButton("Check key & model")
+        self._check_btn = QPushButton("Check & load models")
         self._check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._check_btn.setStyleSheet(
             "QPushButton{background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:6px 12px;border-radius:4px;}"
             "QPushButton:hover{background:#1E3E2B;}"
         )
-        self._check_btn.clicked.connect(lambda: self._on_test_api())
+        self._check_btn.clicked.connect(lambda: self._on_check_models())
 
-        form_api.addRow("AI Model:", self._ai_model)
-        form_api.addRow("Groq API Key:", self._api_key)
+        form_api.addRow("Base URL:", self._api_base_url)
+        form_api.addRow("API Key:", self._api_key)
+        form_api.addRow("Model:", self._ai_model)
         status_row = QHBoxLayout()
         status_row.addWidget(self._key_status, 1)
         status_row.addWidget(self._clear_key_btn)
@@ -286,6 +304,7 @@ class SettingsPanel(QWidget):
             "QPushButton:hover{background:#33FFAA;}"
         )
         save_btn.clicked.connect(self._emit_save)
+        self._save_btn = save_btn
 
         close_btn = QPushButton("Close")
         close_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -328,7 +347,9 @@ class SettingsPanel(QWidget):
         self._api_signals.finished.connect(self._show_api_result)
 
         self._opacity.valueChanged.connect(self._on_opacity_slider_changed)
-        self._ai_model.currentIndexChanged.connect(self._on_model_changed)
+        self._api_base_url.textChanged.connect(self._invalidate_check)
+        self._api_key.textChanged.connect(self._invalidate_check)
+        self._ai_model.currentTextChanged.connect(self._invalidate_check)
         self.apply_data(self._data)
 
     def _on_opacity_slider_changed(self, v: int) -> None:
@@ -410,9 +431,18 @@ class SettingsPanel(QWidget):
         # Preferences
         self._font_size.setValue(int(self._data.get("font_size", 13)))
 
+        # Base URL selects the provider; it also decides which key slot and
+        # model catalog are active.
+        base_url = str(self._data.get("api_base_url") or DEFAULT_BASE_URL).strip()
+        base_url = base_url or DEFAULT_BASE_URL
+        if self._discovered_for and self._discovered_for.rstrip("/") != base_url.rstrip("/"):
+            self._discovered_models = []
+            self._discovered_for = ""
+        self._api_base_url.setText(base_url)
+
         # AI Model (persisted custom IDs may not exist yet in a fresh combo)
         self._custom_models = list(self._data.get("custom_models") or [])
-        self._populate_model_combo()
+        self._populate_model_combo(self._discovered_models or None)
         chosen_model = str(self._data.get("ai_model", DEFAULT_MODEL))
         idx = self._ai_model.findData(chosen_model)
         if idx < 0 and chosen_model:
@@ -434,21 +464,11 @@ class SettingsPanel(QWidget):
         self._hk_ask.setText(str(hk.get("ask_question", "ctrl+shift+q")))
 
         # API key status (never render the key itself)
-        stored = ""
-        try:
-            stored = key_store.load_key()
-        except Exception:
-            pass
-        if stored:
-            where = "Windows Credential Manager" if key_store.is_keyring_available() else "config/settings.toml (plaintext fallback)"
-            self._key_status.setText(f"● Key stored in {where}")
-            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
-            self._api_key.setPlaceholderText("•••••••••••••••• (stored — leave blank to keep)")
-        else:
-            self._key_status.setText("No key stored.")
-            self._key_status.setStyleSheet("color:#777777;font-size:11px;")
-            self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
+        self._refresh_key_status()
         self._api_key.clear()
+        self._checked_values = None
+        self._pending_check = None
+        self._pending_save = None
 
     def collect_data(self) -> Dict[str, Any]:
         monitor_id = 1
@@ -456,6 +476,13 @@ class SettingsPanel(QWidget):
             monitor_id = int(self._monitor.currentData())
 
         loopback_id = self._loopback_device.currentData()
+
+        model = self._selected_model()
+        # Typed IDs (including discovered IDs) persist across restarts via
+        # custom_models, matching the old "Add custom model" behaviour.
+        known = {model_id for model_id, _label in AVAILABLE_MODELS}
+        if model and model not in known and model not in self._custom_models:
+            self._custom_models.append(model)
 
         return {
             "monitor_id": monitor_id,
@@ -470,7 +497,8 @@ class SettingsPanel(QWidget):
             "loopback_device": loopback_id,
             "whisper_model": self._whisper.currentText(),
             "font_size": int(self._font_size.value()),
-            "ai_model": self._ai_model.currentData() or DEFAULT_MODEL,
+            "api_base_url": self._api_base_url.text().strip() or DEFAULT_BASE_URL,
+            "ai_model": model,
             "custom_models": list(self._custom_models),
             "hotkeys": {
                 "toggle_visibility": self._hk_vis.text().strip(),
@@ -483,67 +511,162 @@ class SettingsPanel(QWidget):
             },
         }
 
-    def _populate_model_combo(self) -> None:
+    def _is_default_base_url(self) -> bool:
+        raw = self._api_base_url.text().strip() or DEFAULT_BASE_URL
+        return raw.rstrip("/") == DEFAULT_BASE_URL.rstrip("/")
+
+    def _selected_model(self) -> str:
+        """Return the selected item's model ID or the typed text."""
+        text = self._ai_model.currentText().strip()
+        if not text:
+            return ""
+        data = self._ai_model.currentData()
+        index = self._ai_model.currentIndex()
+        if (
+            isinstance(data, str)
+            and data.strip()
+            and index >= 0
+            and self._ai_model.itemText(index) == self._ai_model.currentText()
+        ):
+            return data.strip()
+        return text
+
+    def _populate_model_combo(self, models: Optional[List[str]] = None) -> None:
+        """Rebuild the editable combo, keeping the current/typed model.
+
+        `models` is a discovered provider catalog; when omitted, the built-in
+        Groq list is used for the default URL and no static list is shown for
+        custom providers.
+        """
+        current = self._selected_model()
         self._ai_model.blockSignals(True)
         self._ai_model.clear()
-        for model_id, label in AVAILABLE_MODELS:
+        if models is not None:
+            unique = sorted({str(model_id) for model_id in models}, key=str.lower)
+            entries = [(model_id, model_id) for model_id in unique]
+        elif self._is_default_base_url():
+            entries = list(AVAILABLE_MODELS)
+        else:
+            entries = []
+        for model_id, label in entries:
             self._ai_model.addItem(label, model_id)
         for custom_id in self._custom_models:
             if self._ai_model.findData(custom_id) < 0:
                 self._ai_model.addItem(f"{custom_id} (custom)", custom_id)
-        if self._ai_model.findData(ADD_CUSTOM_MODEL_SENTINEL) < 0:
-            self._ai_model.addItem("＋ Add custom model…", ADD_CUSTOM_MODEL_SENTINEL)
+        if current and self._ai_model.findData(current) < 0:
+            # Typed/unknown IDs always survive a repopulation.
+            self._ai_model.addItem(current, current)
+        if current:
+            idx = self._ai_model.findData(current)
+            if idx >= 0:
+                self._ai_model.setCurrentIndex(idx)
+            else:
+                self._ai_model.setEditText(current)
         self._ai_model.blockSignals(False)
 
-    def _on_model_changed(self, index: int) -> None:
-        if self._ai_model.currentData() != ADD_CUSTOM_MODEL_SENTINEL:
-            return
-        # Reopen the add dialog; addSelectingItself restores the previous choice.
-        name = self._prompt_custom_model()
-        if name:
-            self._add_custom_model(name)
+    def _invalidate_check(self, *_args: Any) -> None:
+        self._checked_values = None
+
+    def _on_base_url_edited(self) -> None:
+        self._invalidate_check()
+        raw = self._api_base_url.text().strip() or DEFAULT_BASE_URL
+        if self._discovered_for and self._discovered_for.rstrip("/") != raw.rstrip("/"):
+            self._discovered_models = []
+            self._discovered_for = ""
+            self._populate_model_combo()
+        self._refresh_key_status()
+
+    def _stored_key(self, base_url: str) -> str:
+        host = ai_engine.host_for_base_url(base_url)
+        if not host:
+            return ""
+        try:
+            return key_store.load_key_for(host)
+        except Exception:
+            return ""
+
+    def _refresh_key_status(self) -> None:
+        raw = self._api_base_url.text().strip() or DEFAULT_BASE_URL
+        host = ai_engine.host_for_base_url(raw)
+        label = host or "this provider"
+        stored = self._stored_key(raw)
+        if stored:
+            where = (
+                "Windows Credential Manager"
+                if key_store.is_keyring_available()
+                else "config/settings.toml (plaintext fallback)"
+            )
+            self._key_status.setText(f"● Key stored for {label} in {where}")
+            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+            self._api_key.setPlaceholderText(
+                "•••••••••••••••• (stored — leave blank to keep)"
+            )
         else:
-            self._ai_model.setCurrentIndex(max(0, self._ai_model.findData(DEFAULT_MODEL)))
+            self._key_status.setText(f"No key stored for {label}.")
+            self._key_status.setStyleSheet("color:#777777;font-size:11px;")
+            self._api_key.setPlaceholderText(
+                f"Paste key for {label} — saved to Windows Credential Manager"
+            )
 
-    def _prompt_custom_model(self) -> str:
-        text, ok = QInputDialog.getText(
-            self,
-            "Add Custom Model",
-            "Model ID (as listed at console.groq.com/docs/models):\n"
-            "Example: qwen/qwen3.8-27b",
-            QLineEdit.EchoMode.Normal,
-            "",
-        )
-        if not ok:
-            return ""
-        model_id = text.strip()
-        if not model_id:
-            QMessageBox.warning(self, "Add Custom Model", "Model ID cannot be empty.")
-            return ""
-        if " " in model_id:
-            QMessageBox.warning(self, "Add Custom Model", "Model IDs cannot contain spaces.")
-            return ""
-        return model_id
+    def _set_status(self, message: str, color: str) -> None:
+        self._key_status.setText(message)
+        self._key_status.setStyleSheet(f"color:{color};font-size:11px;")
 
-    def _add_custom_model(self, model_id: str) -> None:
-        if model_id not in self._custom_models:
-            self._custom_models.append(model_id)
-        self._populate_model_combo()
-        idx = self._ai_model.findData(model_id)
-        if idx >= 0:
-            self._ai_model.setCurrentIndex(idx)
+    def _show_error(self, message: str) -> None:
+        self._tabs.setCurrentWidget(self._api_tab)
+        self._set_status(f"● {message}", "#FF5555")
 
     def _emit_save(self) -> None:
         d = self.collect_data()
-        k = self._api_key.text().strip()
-        if k:
+        model = str(d.get("ai_model", "")).strip()
+        if not model:
+            self._tabs.setCurrentWidget(self._api_tab)
+            self._show_error("Choose or type a model before saving.")
+            self._ai_model.setFocus()
+            return
+
+        try:
+            base_url = ai_engine.normalize_base_url(str(d.get("api_base_url", "")))
+        except ValueError as e:
+            self._tabs.setCurrentWidget(self._api_tab)
+            self._show_error(str(e))
+            self._api_base_url.setFocus()
+            return
+
+        # Persist the normalized URL (no trailing slash) in the settings.
+        self._api_base_url.setText(base_url)
+        d["api_base_url"] = base_url
+        key = self._api_key.text().strip()
+        signature = (base_url, key or self._stored_key(base_url), model)
+        if self._checked_values == signature:
+            self._commit_save(d, key)
+            return
+
+        # Check was skipped or its values changed: validate before saving.
+        self._pending_check = None
+        self._pending_save = {"data": d, "key": key, "signature": signature}
+        self._set_status("● Checking key and model before saving…", "#FFAA00")
+        self._check_btn.setEnabled(False)
+        self._save_btn.setEnabled(False)
+
+        def _work() -> None:
+            ok, msg = ai_engine.validate_key_and_model(
+                api_key=key, model_id=model, base_url=base_url
+            )
+            self._api_signals.finished.emit(ok, msg, [])
+
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _commit_save(self, d: Dict[str, Any], key_text: str) -> None:
+        base_url = str(d.get("api_base_url") or DEFAULT_BASE_URL)
+        host = ai_engine.host_for_base_url(base_url) or "this provider"
+        if key_text:
             try:
-                backend = key_store.save_key(k)
+                backend = key_store.save_key_for(host, key_text)
             except Exception as e:
                 reason = str(e).strip() or e.__class__.__name__
                 self._tabs.setCurrentWidget(self._api_tab)
-                self._key_status.setText(f"● Could not save key: {reason}")
-                self._key_status.setStyleSheet("color:#FF5555;font-size:11px;")
+                self._show_error(f"Could not save key: {reason}")
                 self._api_key.setFocus()
                 return
             where = (
@@ -551,67 +674,111 @@ class SettingsPanel(QWidget):
                 if backend == "keyring"
                 else "config/settings.toml (plaintext fallback)"
             )
-            self._key_status.setText(f"● Key saved to {where} — checking…")
-            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
+            self._set_status(f"● Key saved to {where} for {host}", "#00FF88")
             self._api_key.clear()
             self._api_key.setPlaceholderText(
                 "•••••••••••••••• (stored — leave blank to keep)"
             )
+        else:
+            self._refresh_key_status()
+
+        effective = key_text or self._stored_key(base_url)
+        self._checked_values = (
+            base_url,
+            effective,
+            str(d.get("ai_model", "")).strip(),
+        )
         self.saved.emit(d)
-        # Validate the pasted key explicitly instead of relying on the storage
-        # backend being immediately readable after the save.
-        self._on_test_api(k)
 
     def _on_clear_key(self) -> None:
+        raw = self._api_base_url.text().strip() or DEFAULT_BASE_URL
+        host = ai_engine.host_for_base_url(raw)
+        if not host:
+            QMessageBox.warning(
+                self, "Clear Stored Key", "Enter a valid Base URL first."
+            )
+            return
         confirm = QMessageBox.question(
             self,
             "Clear Stored Key",
-            "Remove the stored API key from this computer?\n"
+            f"Remove the stored API key for {host} from this computer?\n"
             "AI answers will stop working until you enter a new key.",
         )
         if confirm != QMessageBox.StandardButton.Yes:
             return
         try:
-            key_store.clear_key()
+            key_store.clear_key_for(host)
         except Exception as e:
             QMessageBox.warning(self, "Key Storage Failed", str(e))
             return
-        self._key_status.setText("No key stored.")
-        self._key_status.setStyleSheet("color:#777777;font-size:11px;")
-        self._api_key.setPlaceholderText("Paste key — saved to Windows Credential Manager")
+        self._refresh_key_status()
         self._api_key.clear()
+        self._checked_values = None
 
-    def _on_test_api(self, api_key: str = "") -> None:
-        """Verify key + model together (models.list, no token usage), inline result."""
-        model = self._ai_model.currentData() or DEFAULT_MODEL
-        if model == ADD_CUSTOM_MODEL_SENTINEL:
-            QMessageBox.warning(
-                self,
-                "AI Model Required",
-                "Choose a model from the list first, or use '＋ Add custom model…'.",
-            )
+    def _on_check_models(self) -> None:
+        """Validate URL -> key -> model, then load the provider's model list."""
+        raw = self._api_base_url.text().strip()
+        try:
+            base_url = ai_engine.normalize_base_url(raw)
+        except ValueError as e:
+            self._show_error(str(e))
             return
-        k = (api_key or self._api_key.text()).strip()
-        self._key_status.setText("● Checking key and model…")
-        self._key_status.setStyleSheet("color:#FFAA00;font-size:11px;")
+        self._api_base_url.setText(base_url)
+
+        model = self._selected_model()
+        key = self._api_key.text().strip()
+        self._pending_save = None
+        self._pending_check = {"base_url": base_url, "key": key, "model": model}
+        self._checked_values = None
+        self._set_status("● Checking URL, key, and models…", "#FFAA00")
         self._check_btn.setEnabled(False)
+        self._save_btn.setEnabled(False)
 
         def _work() -> None:
-            from core.ai_engine import validate_key_and_model
-
-            ok, msg = validate_key_and_model(api_key=k, model_id=model)
-            self._api_signals.finished.emit(ok, msg)
+            ok, msg, models = ai_engine.discover_models(
+                api_key=key, base_url=base_url, model_id=model or None
+            )
+            self._api_signals.finished.emit(ok, msg, list(models))
 
         threading.Thread(target=_work, daemon=True).start()
 
-    def _show_api_result(self, ok: bool, msg: str) -> None:
+    def _show_api_result(self, ok: bool, msg: str, models: list) -> None:
         self._check_btn.setEnabled(True)
-        if ok:
-            self._key_status.setText(f"● {msg}")
-            self._key_status.setStyleSheet("color:#00FF88;font-size:11px;")
-        else:
-            self._key_status.setText(f"● {msg}")
-            self._key_status.setStyleSheet("color:#FF5555;font-size:11px;")
+        self._save_btn.setEnabled(True)
+        pending_save = self._pending_save
+        pending_check = self._pending_check
+        self._pending_save = None
+        self._pending_check = None
+
+        if pending_save is not None:
+            if not ok:
+                self._checked_values = None
+                self._show_error(msg)
+                return
+            self._commit_save(pending_save["data"], pending_save["key"])
+            return
+
+        if not ok:
+            self._checked_values = None
+            self._show_error(msg)
+            return
+
+        self._set_status(f"● {msg}", "#00FF88")
+        if models:
+            self._discovered_models = [str(model) for model in models]
+            self._discovered_for = (
+                pending_check["base_url"] if pending_check else ""
+            )
+            self._populate_model_combo(self._discovered_models)
+        if pending_check is not None and pending_check["model"]:
+            effective = pending_check["key"] or self._stored_key(
+                pending_check["base_url"]
+            )
+            self._checked_values = (
+                pending_check["base_url"],
+                effective,
+                pending_check["model"],
+            )
 
     def _on_import(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

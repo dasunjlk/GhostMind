@@ -114,7 +114,7 @@ class TestPlaintextFallback:
     def test_fallback_written_to_settings_toml(self, tmp_path):
         key_store.save_key("gsk_plain")
         data = _fallback_toml(tmp_path)
-        assert data["key_storage"]["api_key"] == "gsk_plain"
+        assert data["key_storage"]["api.groq.com"]["api_key"] == "gsk_plain"
 
     def test_clear_removes_fallback_section(self, tmp_path):
         key_store.save_key("gsk_plain")
@@ -129,10 +129,108 @@ class TestPlaintextFallback:
         data = toml.load(path)
         assert data["ai_model"] == "qwen/qwen3.8-27b"
         assert data["opacity"] == 0.9
-        assert data["key_storage"]["api_key"] == "gsk_keep"
+        assert data["key_storage"]["api.groq.com"]["api_key"] == "gsk_keep"
 
     def test_is_keyring_available_false(self):
         assert key_store.is_keyring_available() is False
+
+
+class TestPerHostKeys:
+    def test_roundtrip_for_custom_host(self):
+        assert key_store.save_key_for("openrouter.ai", "sk-or-test") == "keyring"
+        assert key_store.load_key_for("openrouter.ai") == "sk-or-test"
+
+    def test_keys_are_isolated_per_host(self):
+        key_store.save_key_for("api.groq.com", "gsk_groq")
+        key_store.save_key_for("openrouter.ai", "sk-or-test")
+        assert key_store.load_key_for("api.groq.com") == "gsk_groq"
+        assert key_store.load_key_for("openrouter.ai") == "sk-or-test"
+
+    def test_keyring_slot_is_namespaced(self, fake_keyring):
+        key_store.save_key_for("openrouter.ai", "sk-or-test")
+        assert (
+            fake_keyring._store[
+                (key_store.SERVICE_NAME, "API_KEY::openrouter.ai")
+            ]
+            == "sk-or-test"
+        )
+
+    def test_host_accepts_a_full_url_and_keeps_ports_distinct(self):
+        key_store.save_key_for("https://openrouter.ai/api/v1", "sk-or-test")
+        assert key_store.load_key_for("openrouter.ai") == "sk-or-test"
+
+        key_store.save_key_for("http://localhost:11434/v1", "local-key")
+        assert key_store.load_key_for("localhost:11434") == "local-key"
+        assert key_store.load_key_for("localhost:11435") == ""
+
+    def test_clear_only_removes_the_requested_host(self):
+        key_store.save_key_for("api.groq.com", "gsk_groq")
+        key_store.save_key_for("openrouter.ai", "sk-or-test")
+        key_store.clear_key_for("openrouter.ai")
+        assert key_store.load_key_for("openrouter.ai") == ""
+        assert key_store.load_key_for("api.groq.com") == "gsk_groq"
+
+
+class TestPerHostPlaintextFallback:
+    @pytest.fixture(autouse=True)
+    def no_keyring(self, monkeypatch):
+        monkeypatch.setattr(key_store, "_KEYRING", False, raising=False)
+
+    def test_sections_are_per_host(self, tmp_path):
+        key_store.save_key_for("api.groq.com", "gsk_groq")
+        key_store.save_key_for("openrouter.ai", "sk-or-test")
+        data = _fallback_toml(tmp_path)
+        assert data["key_storage"]["api.groq.com"]["api_key"] == "gsk_groq"
+        assert data["key_storage"]["openrouter.ai"]["api_key"] == "sk-or-test"
+        assert key_store.load_key_for("openrouter.ai") == "sk-or-test"
+
+    def test_save_removes_legacy_flat_key_for_groq(self, tmp_path):
+        path = tmp_path / "settings.toml"
+        path.write_text('[key_storage]\napi_key = "gsk_old"\n', encoding="utf-8")
+        key_store.save_key_for("api.groq.com", "gsk_new")
+        data = toml.load(path)
+        assert "api_key" not in data["key_storage"]
+        assert data["key_storage"]["api.groq.com"]["api_key"] == "gsk_new"
+
+
+class TestLegacyMigration:
+    def test_legacy_keyring_slot_is_used_for_groq(self, fake_keyring):
+        fake_keyring._store[
+            (key_store.SERVICE_NAME, key_store.LEGACY_KEY_NAME)
+        ] = "gsk_legacy"
+        assert key_store.load_key_for("api.groq.com") == "gsk_legacy"
+        # Migration must not duplicate the secret into the new slot.
+        assert (
+            key_store.SERVICE_NAME,
+            "API_KEY::api.groq.com",
+        ) not in fake_keyring._store
+
+    def test_legacy_plaintext_key_is_used_for_groq(self, tmp_path):
+        path = tmp_path / "settings.toml"
+        path.write_text('[key_storage]\napi_key = "gsk_legacy"\n', encoding="utf-8")
+        assert key_store.load_key_for("api.groq.com") == "gsk_legacy"
+
+    def test_legacy_key_does_not_apply_to_other_hosts(self, tmp_path, fake_keyring):
+        fake_keyring._store[
+            (key_store.SERVICE_NAME, key_store.LEGACY_KEY_NAME)
+        ] = "gsk_legacy"
+        path = tmp_path / "settings.toml"
+        path.write_text('[key_storage]\napi_key = "gsk_legacy"\n', encoding="utf-8")
+        assert key_store.load_key_for("openrouter.ai") == ""
+
+    def test_new_slot_beats_legacy(self, fake_keyring):
+        fake_keyring._store[
+            (key_store.SERVICE_NAME, key_store.LEGACY_KEY_NAME)
+        ] = "gsk_legacy"
+        key_store.save_key_for("api.groq.com", "gsk_new")
+        assert key_store.load_key_for("api.groq.com") == "gsk_new"
+
+    def test_clear_for_groq_removes_legacy_keyring(self, fake_keyring):
+        fake_keyring._store[
+            (key_store.SERVICE_NAME, key_store.LEGACY_KEY_NAME)
+        ] = "gsk_legacy"
+        key_store.clear_key_for("api.groq.com")
+        assert key_store.load_key_for("api.groq.com") == ""
 
 
 class TestKeyringFailures:

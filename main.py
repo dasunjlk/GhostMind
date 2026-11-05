@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from core.ai_engine import DEFAULT_MODEL, resolve_api_key
+from core.ai_engine import DEFAULT_BASE_URL, DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from ui.overlay_window import OverlayWindow
@@ -127,7 +127,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "capture_system": False,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
-    # User-added model IDs from the "＋ Add custom model…" flow (API tab)
+    # Provider endpoint (the only provider switch; no provider dropdown).
+    "api_base_url": DEFAULT_BASE_URL,
+    # Model IDs typed/discovered in the API tab, kept for the editable combo.
     "custom_models": [],
 
     "whisper_model": "base",
@@ -203,7 +205,17 @@ def load_settings() -> Dict[str, Any]:
 
 def save_settings(data: Dict[str, Any]) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    to_save = {k: v for k, v in data.items()}
+    # key_store writes secrets directly to settings.toml; never clobber them
+    # with a stale in-memory snapshot (known plaintext-key loss bug).
+    to_save = {k: v for k, v in data.items() if k != "key_storage"}
+    try:
+        if CONFIG_PATH.is_file():
+            disk = toml.load(CONFIG_PATH)
+            stored = disk.get("key_storage") if isinstance(disk, dict) else None
+            if isinstance(stored, dict) and stored:
+                to_save["key_storage"] = stored
+    except Exception as e:
+        logger.warning("Could not preserve stored keys in %s: %s", CONFIG_PATH, e)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         toml.dump(to_save, f)
 
@@ -392,9 +404,10 @@ class GhostMindController(QObject):
         self._sync_click_through_action()
 
     def _refresh_api_key_cta(self) -> None:
-        """Show the first-run API-key call-to-action whenever no key is available."""
+        """Show the first-run API-key CTA when the current provider has no key."""
+        base_url = str(self.settings.get("api_base_url") or DEFAULT_BASE_URL)
         try:
-            missing = not resolve_api_key()
+            missing = not resolve_api_key(base_url=base_url)
         except Exception as e:
             logger.warning("API key check failed: %s", e)
             missing = True

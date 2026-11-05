@@ -17,7 +17,7 @@ def qapp():
 
 @pytest.fixture
 def controller(qapp, monkeypatch):
-    monkeypatch.setattr(app_main, "resolve_api_key", lambda: "")
+    monkeypatch.setattr(app_main, "resolve_api_key", lambda **kwargs: "")
     monkeypatch.setattr(
         app_main.GhostMindController, "_register_hotkeys", lambda self: None
     )
@@ -75,9 +75,23 @@ class TestKeySetupCta:
 
     def test_cta_hidden_when_key_is_available(self, controller, monkeypatch):
         cta = controller.overlay._answer_panel._key_cta
-        monkeypatch.setattr(app_main, "resolve_api_key", lambda: "gsk_test")
+        monkeypatch.setattr(app_main, "resolve_api_key", lambda **kwargs: "gsk_test")
         controller._refresh_api_key_cta()
         assert cta.isHidden()
+
+    def test_cta_checks_the_current_base_url(self, controller, monkeypatch):
+        calls: list = []
+
+        def _resolve(**kwargs):
+            calls.append(kwargs)
+            return "sk-test"
+
+        monkeypatch.setattr(app_main, "resolve_api_key", _resolve)
+        controller.settings["api_base_url"] = "https://openrouter.ai/api/v1"
+
+        controller._refresh_api_key_cta()
+
+        assert calls[-1]["base_url"] == "https://openrouter.ai/api/v1"
 
     def test_cta_opens_api_tab(self, controller, qapp):
         overlay = controller.overlay
@@ -105,7 +119,7 @@ class TestSettingsNavigation:
         cta = controller.overlay._answer_panel._key_cta
         assert not cta.isHidden()
 
-        monkeypatch.setattr(app_main, "resolve_api_key", lambda: "gsk_test")
+        monkeypatch.setattr(app_main, "resolve_api_key", lambda **kwargs: "gsk_test")
         controller.overlay.open_settings()
         controller.overlay._close_settings()
 
