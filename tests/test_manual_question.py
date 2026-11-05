@@ -85,6 +85,7 @@ def _ask(overlay, text: str) -> None:
 def _answer(worker, text: str) -> None:
     worker.chunk_received.emit(text)
     worker.finished_ok.emit()
+    worker.finished.emit()
 
 
 class TestManualPromptRouting:
@@ -159,17 +160,21 @@ class TestAskRowUI:
         overlay.trigger_screen_scan()
         assert calls == [], "scan flow must not add a user bubble"
 
-    def test_send_rejected_keeps_text(self, overlay):
-        """Busy (another answer streaming): typed text must not be lost."""
+    def test_send_while_busy_is_queued(self, overlay, monkeypatch):
+        """A second ask must queue instead of being rejected."""
+        _install_fake_ai(overlay, monkeypatch)
 
-        class _BusyWorker(QObject):
-            def isRunning(self) -> bool:
-                return True
+        _ask(overlay, "first question")
+        _ask(overlay, "second question")
 
-        overlay._ai_worker = _BusyWorker()  # type: ignore[assignment]
-        QTest.keyClicks(overlay._ask_input, "second question")
-        QTest.keyClick(overlay._ask_input, Qt.Key.Key_Return)
-        assert overlay._ask_input.text() == "second question", "text kept when rejected"
+        assert overlay._ask_input.text() == "", "accepted queue entry clears the box"
+        assert len(_FakeAiWorker.created) == 1, "only one worker runs at a time"
+        assert len(overlay._ai_queue) == 1, "second question waits in the queue"
+
+        _answer(_FakeAiWorker.created[0], "first answer")
+
+        assert len(_FakeAiWorker.created) == 2
+        assert _FakeAiWorker.created[-1].content == "second question"
 
     def test_empty_input_does_nothing(self, overlay, monkeypatch):
         sent: list = []

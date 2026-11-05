@@ -34,6 +34,26 @@ class _FakeScanWorker(QObject):
         return True
 
 
+class _FakeAiWorker(QObject):
+    """Stand-in for AiStreamWorker: records the queued scan request."""
+
+    chunk_received = pyqtSignal(str)
+    finished_ok = pyqtSignal()
+    failed = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    created: ClassVar[list] = []
+
+    def __init__(self, content, context_type, **kwargs) -> None:
+        super().__init__()
+        self.content = content
+        self.context_type = context_type
+        _FakeAiWorker.created.append(self)
+
+    def start(self) -> None:
+        pass
+
+
 @pytest.fixture(scope="session")
 def qapp():
     app = QApplication.instance()
@@ -53,8 +73,10 @@ def overlay(qapp):
 @pytest.fixture(autouse=True)
 def _reset_fake_worker():
     _FakeScanWorker.started.clear()
+    _FakeAiWorker.created.clear()
     yield
     _FakeScanWorker.started.clear()
+    _FakeAiWorker.created.clear()
 
 
 class TestScanButton:
@@ -85,3 +107,19 @@ class TestScanButton:
         # Worker finishes -> button re-enabled
         _FakeScanWorker.started[0].finished.emit()
         assert overlay._btn_scan.isEnabled()
+
+    def test_scan_result_goes_through_the_ai_queue(self, overlay, monkeypatch):
+        monkeypatch.setattr(overlay_window, "ScreenScanWorker", _FakeScanWorker)
+        monkeypatch.setattr(overlay_window, "AiStreamWorker", _FakeAiWorker)
+        monkeypatch.setattr(
+            overlay_window,
+            "resolve_api_key",
+            lambda **kwargs: "sk-test",
+        )
+
+        overlay.trigger_screen_scan()
+        _FakeScanWorker.started[0].finished_ok.emit("OCR text")
+
+        assert len(_FakeAiWorker.created) == 1
+        assert _FakeAiWorker.created[0].content == "OCR text"
+        assert _FakeAiWorker.created[0].context_type == "screen"
