@@ -11,7 +11,7 @@ import logging
 import os
 import re
 import time
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -678,6 +678,7 @@ class AiStreamWorker(QThread):
         capacity: Optional[int] = None,
         base_url: Optional[str] = None,
         api_key: Optional[str] = None,
+        history: Optional[List[Dict[str, str]]] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -687,6 +688,9 @@ class AiStreamWorker(QThread):
         self._capacity = capacity
         self._base_url = base_url
         self._api_key = api_key
+        self._history = [
+            dict(message) for message in (history or []) if isinstance(message, dict)
+        ]
 
     def run(self) -> None:
         try:
@@ -697,10 +701,13 @@ class AiStreamWorker(QThread):
 
         system = build_system_prompt(self._context_type, self._content, self._capacity)
         user_msg = build_user_message(self._context_type, self._content)
-        messages = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_msg},
-        ]
+        messages = [{"role": "system", "content": system}]
+        for message in self._history:
+            role = str(message.get("role", "")).strip()
+            content = str(message.get("content", "")).strip()
+            if role in ("user", "assistant") and content:
+                messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": user_msg})
         max_tokens = get_token_limit_for_context(self._context_type, self._content, self._capacity)
 
         models_to_try = _models_to_try(self._model_id, self._base_url)

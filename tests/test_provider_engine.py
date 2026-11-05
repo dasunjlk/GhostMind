@@ -247,7 +247,7 @@ class _FakeClient:
         self.chat = SimpleNamespace(completions=_Completions(self))
 
 
-def _run_worker(monkeypatch, client, base_url=None, api_key="sk-test"):
+def _run_worker(monkeypatch, client, base_url=None, api_key="sk-test", history=None):
     monkeypatch.setattr(
         ai_engine,
         "_get_client",
@@ -259,6 +259,7 @@ def _run_worker(monkeypatch, client, base_url=None, api_key="sk-test"):
         "manual",
         base_url=base_url,
         api_key=api_key,
+        history=history,
     )
     chunks = []
     failures = []
@@ -285,6 +286,49 @@ class TestStreamWorker:
         assert call["model"] == ai_engine.MODEL_ID
         assert call["temperature"] == DETERMINISTIC_TEMPERATURE
         assert call["seed"] == DETERMINISTIC_SEED
+
+    def test_history_is_inserted_before_the_current_user_message(self, monkeypatch):
+        client = _FakeClient(chunks=[_Chunk("4")])
+        _run_worker(
+            monkeypatch,
+            client,
+            history=[
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "first answer"},
+            ],
+        )
+
+        messages = client.calls[0]["messages"]
+        assert [message["role"] for message in messages] == [
+            "system",
+            "user",
+            "assistant",
+            "user",
+        ]
+        assert messages[1]["content"] == "first question"
+        assert messages[2]["content"] == "first answer"
+        assert messages[3]["content"] == "What is 2+2?"
+
+    def test_history_entries_are_filtered(self, monkeypatch):
+        client = _FakeClient(chunks=[_Chunk("4")])
+        _run_worker(
+            monkeypatch,
+            client,
+            history=[
+                "not a message",
+                {"role": "system", "content": "ignored"},
+                {"role": "user", "content": "   "},
+                {"role": "assistant", "content": "kept"},
+            ],
+        )
+
+        messages = client.calls[0]["messages"]
+        assert [message["role"] for message in messages] == [
+            "system",
+            "assistant",
+            "user",
+        ]
+        assert messages[1]["content"] == "kept"
 
     def test_custom_provider_does_not_fall_back(self, monkeypatch):
         client = _FakeClient(error=_http_error("model_not_found", 404))
