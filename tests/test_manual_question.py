@@ -2,11 +2,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import ClassVar
 
 import pytest
-from PyQt6.QtCore import QObject, Qt
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QLineEdit
+from PyQt6.QtWidgets import QApplication, QLineEdit, QPushButton
 
 import ui.overlay_window as overlay_window
 from core.ai_engine import build_system_prompt, build_user_message
@@ -28,6 +29,62 @@ def overlay(qapp):
     win.show()
     yield win
     win.close()
+
+
+class _FakeAiWorker(QObject):
+    """Stand-in for AiStreamWorker: records history and emits synchronously."""
+
+    chunk_received = pyqtSignal(str)
+    finished_ok = pyqtSignal()
+    failed = pyqtSignal(str)
+    finished = pyqtSignal()
+
+    created: ClassVar[list] = []
+
+    def __init__(
+        self,
+        content,
+        context_type,
+        model_id=None,
+        capacity=None,
+        base_url=None,
+        api_key=None,
+        history=None,
+        parent=None,
+    ):
+        super().__init__(parent)
+        self.content = content
+        self.context_type = context_type
+        self.history = history
+        _FakeAiWorker.created.append(self)
+
+    def isRunning(self) -> bool:
+        return False
+
+    def start(self) -> None:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def _reset_fake_ai_worker():
+    _FakeAiWorker.created.clear()
+    yield
+    _FakeAiWorker.created.clear()
+
+
+def _install_fake_ai(overlay, monkeypatch) -> None:
+    monkeypatch.setattr(overlay_window, "AiStreamWorker", _FakeAiWorker)
+    monkeypatch.setattr(overlay_window, "resolve_api_key", lambda **kwargs: "sk-test")
+
+
+def _ask(overlay, text: str) -> None:
+    overlay._ask_input.setText(text)
+    overlay._send_manual_question()
+
+
+def _answer(worker, text: str) -> None:
+    worker.chunk_received.emit(text)
+    worker.finished_ok.emit()
 
 
 class TestManualPromptRouting:
@@ -178,3 +235,95 @@ class TestSettingsRoundTrip:
         panel = SettingsPanel(data)
         assert panel._hk_ask.text() == "ctrl+alt+f9"
         assert panel.collect_data()["hotkeys"]["ask_question"] == "ctrl+alt+f9"
+
+
+class TestSessionMemoryIntegration:
+    def test_second_prompt_contains_the_first_exchange(self, overlay, monkeypatch):
+        _install_fake_ai(overlay, monkeypatch)
+
+        _ask(overlay, "What is 2+2?")
+        _answer(_FakeAiWorker.created[-1], "4")
+
+        _ask(overlay, "And 3+3?")
+
+        assert _FakeAiWorker.created[-1].history == [
+            {"role": "user", "content": "What is 2+2?"},
+            {"role": "assistant", "content": "4"},
+        ]
+
+    def test_failed_answer_is_not_remembered(self, overlay, monkeypatch):
+        _install_fake_ai(overlay, monkeypatch)
+
+        _ask(overlay, "bad question")
+        worker = _FakeAiWorker.created[-1]
+        worker.chunk_received.emit("partial")
+        worker.failed.emit("network error")
+
+        assert overlay._memory.is_empty() is True
+
+        _ask(overlay, "next question")
+        assert _FakeAiWorker.created[-1].history is None
+
+    def test_screen_scan_exchange_is_remembered(self, overlay, monkeypatch):
+        _install_fake_ai(overlay, monkeypatch)
+
+        overlay._start_ai("OCR text", "screen")
+        _answer(_FakeAiWorker.created[-1], "screen answer")
+
+        assert overlay._memory.window() == [
+            {"role": "user", "content": "OCR text"},
+            {"role": "assistant", "content": "screen answer"},
+        ]
+
+        _ask(overlay, "follow-up")
+        assert _FakeAiWorker.created[-1].history == [
+            {"role": "user", "content": "OCR text"},
+            {"role": "assistant", "content": "screen answer"},
+        ]
+
+    def test_meeting_context_is_not_remembered_or_injected(self, overlay, monkeypatch):
+        _install_fake_ai(overlay, monkeypatch)
+
+        overlay._start_ai("meeting transcript", "meeting_audio")
+        _answer(_FakeAiWorker.created[-1], "meeting answer")
+
+        assert overlay._memory.is_empty() is True
+
+        overlay._memory.add_question("manual question", "manual")
+        overlay._memory.add_answer("manual answer")
+        overlay._start_ai("another transcript", "meeting_audio")
+
+        assert _FakeAiWorker.created[-1].history is None
+
+    def test_clear_button_forgets_memory_and_has_tooltip(self, overlay):
+        overlay._memory.add_question("question", "manual")
+        overlay._memory.add_answer("answer")
+        clear_btn = next(
+            button
+            for button in overlay._answer_panel.findChildren(QPushButton)
+            if button.text() == "Clear"
+        )
+
+        assert "forgets" in clear_btn.toolTip().lower()
+        clear_btn.click()
+
+        assert overlay._memory.is_empty() is True
+
+    def test_clear_answers_forgets_memory(self, overlay):
+        overlay._memory.add_question("question", "manual")
+        overlay._memory.add_answer("answer")
+
+        overlay.clear_answers()
+
+        assert overlay._memory.is_empty() is True
+
+    def test_clearing_mid_stream_drops_the_pending_answer(self, overlay, monkeypatch):
+        _install_fake_ai(overlay, monkeypatch)
+
+        _ask(overlay, "question")
+        worker = _FakeAiWorker.created[-1]
+        worker.chunk_received.emit("partial")
+        overlay.clear_answers()
+        worker.finished_ok.emit()
+
+        assert overlay._memory.is_empty() is True

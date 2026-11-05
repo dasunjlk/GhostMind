@@ -55,6 +55,7 @@ from core.ai_engine import (
     resolve_api_key,
 )
 from core.screen_reader import ScreenScanWorker
+from core.session_memory import MEMORY_CONTEXTS, SessionMemory
 from core.stealth import apply_stealth
 from ui.answer_panel import AnswerPanel
 from ui.click_through_banner import ClickThroughBanner
@@ -299,6 +300,7 @@ class OverlayWindow(QMainWindow):
         self._resize_start_geom: Optional[QRect] = None
         self._ai_worker: Optional[AiStreamWorker] = None
         self._scan_worker: Optional[ScreenScanWorker] = None
+        self._memory = SessionMemory()
         self._visible_target = True
         self.close_event_allowed = True
         self._opacity_anim: Optional[QVariantAnimation] = None
@@ -480,6 +482,7 @@ class OverlayWindow(QMainWindow):
 
         self._answer_panel = AnswerPanel()
         self._answer_panel.key_setup_requested.connect(self._open_api_settings)
+        self._answer_panel.clear_clicked.connect(self._memory.clear)
         self._subtitle_bar = SubtitleBar()
         sub_host = QWidget()
         sl = QVBoxLayout(sub_host)
@@ -684,6 +687,7 @@ class OverlayWindow(QMainWindow):
 
     def clear_answers(self) -> None:
         self._answer_panel.clear_all()
+        self._memory.clear()
 
     def toggle_subtitles_tab(self) -> None:
         # v1.0: subtitles tab hidden (future-plan.md checklist). Re-enabling the
@@ -784,6 +788,11 @@ class OverlayWindow(QMainWindow):
             self._answer_panel.end_stream_error("Already processing another answer.")
             return
 
+        remember = context_type in MEMORY_CONTEXTS
+        history = self._memory.window() if remember else []
+        if remember:
+            self._memory.add_question(content, context_type)
+
         model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
         base_url = str(self._settings.get("api_base_url") or DEFAULT_BASE_URL)
         api_key = resolve_api_key(base_url=base_url)
@@ -795,14 +804,15 @@ class OverlayWindow(QMainWindow):
         )
 
         self._answer_panel.begin_answer_stream()
-        worker = AiStreamWorker(
-            content,
-            context_type,
-            model_id=model_id,
-            capacity=capacity,
-            base_url=base_url,
-            api_key=api_key,
-        )
+        worker_kwargs: Dict[str, Any] = {
+            "model_id": model_id,
+            "capacity": capacity,
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+        if history:
+            worker_kwargs["history"] = history
+        worker = AiStreamWorker(content, context_type, **worker_kwargs)
         self._ai_worker = worker
 
         def _cleanup_ai() -> None:
@@ -810,11 +820,19 @@ class OverlayWindow(QMainWindow):
                 self._ai_worker = None
 
         worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
-        worker.finished_ok.connect(self._answer_panel.end_stream_success)
-        worker.failed.connect(self._answer_panel.end_stream_error)
+        worker.finished_ok.connect(self._on_ai_finished)
+        worker.failed.connect(self._on_ai_failed)
         worker.finished.connect(_cleanup_ai)
         worker.finished.connect(worker.deleteLater)
         worker.start()
+
+    def _on_ai_finished(self) -> None:
+        answer = self._answer_panel.end_stream_success()
+        self._memory.add_answer(answer)
+
+    def _on_ai_failed(self, message: str) -> None:
+        self._memory.discard_pending()
+        self._answer_panel.end_stream_error(message)
 
 
     def _apply_window_opacity(self, op: float) -> None:
