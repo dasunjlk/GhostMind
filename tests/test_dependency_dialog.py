@@ -17,7 +17,7 @@ TESSERACT_MSG = (
     "  Install: choco install tesseract"
 )
 
-PLAIN_MSG = "groq package not installed.\n  AI answers will not work."
+PLAIN_MSG = "openai package not installed.\n  AI answers will not work."
 
 
 @pytest.fixture(scope="session")

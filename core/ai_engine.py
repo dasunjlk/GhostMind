@@ -1,5 +1,8 @@
 """
-Groq API integration with prompt routing, fast streaming, and structured formatting.
+OpenAI-compatible AI engine with prompt routing, streaming, and structured formatting.
+
+The provider is selected entirely by `base_url`, so Groq, OpenRouter, and any
+other OpenAI-compatible chat-completions endpoint work without code changes.
 """
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ import os
 import re
 import time
 from typing import List, Optional, Tuple
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
@@ -16,12 +20,12 @@ from PyQt6.QtCore import QObject, QThread, pyqtSignal
 logger = logging.getLogger(__name__)
 
 try:
-    from groq import Groq
+    from openai import OpenAI
 except ImportError:  # pragma: no cover
-    Groq = None  # type: ignore
+    OpenAI = None  # type: ignore
 
 try:
-    from groq import RateLimitError  # type: ignore
+    from openai import RateLimitError  # type: ignore
 except ImportError:  # pragma: no cover
     RateLimitError = None  # type: ignore
 
@@ -43,6 +47,15 @@ AVAILABLE_MODELS: List[Tuple[str, str]] = [
 
 # Sentinel itemData value for the settings dropdown "＋ Add custom model…" entry.
 ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
+
+# Default provider. `base_url` is the only switch between providers; no
+# provider-specific branching exists outside the Groq backup-model cascade.
+DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+
+# Determinism: providers honor `seed` best-effort. Combined with temperature 0
+# this makes repeated questions return stable answers.
+DETERMINISTIC_TEMPERATURE = 0.0
+DETERMINISTIC_SEED = 7
 
 MAX_TOKENS = 1024
 
@@ -272,7 +285,12 @@ def build_user_message(context_type: str, content: str) -> str:
 
 
 def resolve_api_key(explicit: Optional[str] = None) -> str:
-    """API key lookup order: explicit argument -> keyring store -> env/.env."""
+    """API key lookup for the default Groq provider.
+
+    Order: explicit argument -> keyring store -> env/.env. Custom providers
+    receive their key explicitly from Settings; this fallback never applies
+    to them.
+    """
     key = (explicit or "").strip()
     if not key:
         try:
@@ -286,33 +304,168 @@ def resolve_api_key(explicit: Optional[str] = None) -> str:
     return key
 
 
-_NO_KEY_MSG = (
-    "No API key found. Open Settings -> API, paste your free key "
-    "from https://console.groq.com, then Save."
-)
+_NO_KEY_MSG = "No API key found. Open Settings -> API, paste your key, then Save."
 
 
-def _classify_api_error(err: Exception) -> str:
-    """Map a Groq client exception to a short, actionable user message."""
+def _host_for(base_url: Optional[str]) -> str:
+    """Best-effort host label used in user-facing error messages."""
+    raw = (base_url or DEFAULT_BASE_URL).strip()
+    try:
+        host = urlparse(raw).netloc
+    except ValueError:
+        host = ""
+    return host or raw or "the provider"
+
+
+def normalize_base_url(base_url: Optional[str] = None) -> str:
+    """Return a validated base URL, defaulting to Groq.
+
+    Most OpenAI-compatible providers require the `/v1` path. An invalid value
+    raises a message the UI can show directly.
+    """
+    raw = (base_url or "").strip()
+    if not raw:
+        return DEFAULT_BASE_URL
+    parsed = urlparse(raw)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise ValueError(
+            f"Couldn't reach {raw} — check the Base URL "
+            "(most providers need the /v1 path) and your connection."
+        )
+    return raw.rstrip("/")
+
+
+def _is_default_provider(base_url: Optional[str]) -> bool:
+    return (base_url or DEFAULT_BASE_URL).strip().rstrip("/") == DEFAULT_BASE_URL.rstrip("/")
+
+
+def _models_to_try(
+    model_id: Optional[str],
+    base_url: Optional[str] = None,
+) -> List[str]:
+    """Primary model plus Groq backups only when using the default provider.
+
+    Silent cross-provider fallback is a wrong-answer source, so a custom base
+    URL always tries exactly the requested model.
+    """
+    primary = (model_id or MODEL_ID).strip() or MODEL_ID
+    if not _is_default_provider(base_url):
+        return [primary]
+    return [primary] + [m for m in BACKUP_MODELS if m != primary]
+
+
+def _status_code(err: Exception) -> Optional[int]:
+    code = getattr(err, "status_code", None)
+    if isinstance(code, int):
+        return code
+    response = getattr(err, "response", None)
+    code = getattr(response, "status_code", None)
+    if isinstance(code, int):
+        return code
+    match = re.search(r"\b([45]\d{2})\b", str(err))
+    return int(match.group(1)) if match else None
+
+
+def _is_auth_or_credit_error(err: Exception) -> bool:
+    """True for failures that retrying or switching models cannot fix."""
+    status = _status_code(err)
+    if status in (401, 402, 403):
+        return True
     text = str(err).lower()
-    if (
-        "401" in text
-        or "invalid_api_key" in text
-        or "invalid api key" in text
-        or "unauthorized" in text
-    ):
-        return "API key was rejected - invalid or revoked. Double-check the key from https://console.groq.com"
+    return any(
+        marker in text
+        for marker in (
+            "invalid_api_key",
+            "invalid api key",
+            "unauthorized",
+            "forbidden",
+            "insufficient credits",
+            "insufficient_quota",
+        )
+    )
+
+
+def _looks_like_model_error(
+    err: Exception,
+    status: Optional[int],
+) -> bool:
+    text = str(err).lower()
     if any(
-        s in text
-        for s in ("connection", "timed out", "timeout", "getaddrinfo", "unreachable", "failed to resolve")
+        marker in text
+        for marker in (
+            "model_not_found",
+            "model not found",
+            "model does not exist",
+            "does not exist",
+            "not have access",
+            "invalid model",
+            "no such model",
+        )
     ):
-        return "Network error reaching Groq. Check your internet connection and try again."
-    return f"Groq error: {str(err)[:200]}"
+        return True
+    return status == 404 and "model" in text
+
+
+def _classify_api_error(
+    err: Exception,
+    base_url: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> str:
+    """Map a provider exception to a short, actionable user message."""
+    host = _host_for(base_url)
+    status = _status_code(err)
+    text = str(err).lower()
+
+    if status in (401, 403) or any(
+        marker in text
+        for marker in ("invalid_api_key", "invalid api key", "unauthorized", "forbidden")
+    ):
+        return (
+            f"Your API key was rejected by {host} — paste it again "
+            "from the provider's dashboard."
+        )
+    if status == 402 or "insufficient credits" in text or "insufficient_quota" in text:
+        return f"This key has no credit left on {host} — top up or switch model."
+    if status == 429 or "rate limit" in text:
+        return f"Rate limit reached on {host} — wait a moment and try again."
+    if _looks_like_model_error(err, status):
+        model = (model_id or "").strip() or "that model"
+        return (
+            f"Model '{model}' isn't available under this key — "
+            "pick another model in Settings → API."
+        )
+    if status is not None and 500 <= status <= 599:
+        return f"{host} had a server error — try again in a moment."
+    if status == 404:
+        return (
+            f"Couldn't reach the API at {host} — check the Base URL "
+            "(most providers need the /v1 path) and your connection."
+        )
+    if any(
+        marker in text
+        for marker in (
+            "connection",
+            "timed out",
+            "timeout",
+            "getaddrinfo",
+            "unreachable",
+            "failed to resolve",
+            "name or service not known",
+            "certificate",
+            "ssl",
+        )
+    ):
+        return (
+            f"Couldn't reach {host} — check the Base URL "
+            "(most providers need the /v1 path) and your connection."
+        )
+    return f"{host} error: {str(err)[:200]}"
 
 
 def validate_key_and_model(
     api_key: Optional[str] = None,
     model_id: Optional[str] = None,
+    base_url: Optional[str] = None,
 ) -> Tuple[bool, str]:
     """Verify the API key works AND that `model_id` is available to it.
 
@@ -320,37 +473,47 @@ def validate_key_and_model(
     Returns (ok, human-readable message) — never raises.
     """
     load_dotenv()
-    key = resolve_api_key(api_key)
-    if not key:
-        return False, _NO_KEY_MSG
-    if Groq is None:
-        return False, "groq package is not installed. Install it with: pip install groq"
     try:
-        client = Groq(api_key=key)
+        client = _get_client(base_url, api_key)
+    except Exception as e:
+        return False, str(e)
+    try:
         models = client.models.list()
         ids = {m.id for m in (getattr(models, "data", None) or [])}
     except Exception as e:
-        return False, _classify_api_error(e)
+        return False, _classify_api_error(e, base_url=base_url, model_id=model_id)
     model = (model_id or MODEL_ID).strip()
     if ids and model not in ids:
         return False, (
-            f"Model '{model}' is not available with this API key. "
-            "Pick a model from the list, or check the exact ID at https://console.groq.com/docs/models"
+            f"Model '{model}' isn't available under this key — "
+            "pick another model in Settings → API."
         )
     return True, f"API key works - '{model}' is ready."
 
 
-def _get_client() -> Groq:
+def _get_client(
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
+):
+    """Build an OpenAI-compatible client for `base_url`.
+
+    When no explicit key is given, the default Groq lookup order applies
+    (keyring -> env/.env). Custom providers always pass their key explicitly.
+    """
     load_dotenv()
-    if Groq is None:
+    if OpenAI is None:
         raise RuntimeError(
-            "groq package is not installed.\n"
-            "Install it with: pip install groq"
+            "openai package is not installed.\n"
+            "Install it with: pip install openai"
         )
-    key = resolve_api_key()
+    try:
+        url = normalize_base_url(base_url)
+    except ValueError as e:
+        raise RuntimeError(str(e)) from e
+    key = (api_key or "").strip() or resolve_api_key()
     if not key:
         raise RuntimeError(_NO_KEY_MSG)
-    return Groq(api_key=key)
+    return OpenAI(base_url=url, api_key=key)
 
 
 def get_token_limit_for_context(
@@ -382,14 +545,15 @@ async def generate_answer(
     context_type: str = "screen",
     model_id: Optional[str] = None,
     capacity: Optional[int] = None,
+    base_url: Optional[str] = None,
+    api_key: Optional[str] = None,
 ) -> str:
     """Async API call (non-streaming); used for tests or direct await."""
-    client = _get_client()
+    client = _get_client(base_url, api_key)
     system = build_system_prompt(context_type, content, capacity)
     user_msg = build_user_message(context_type, content)
     max_tokens = get_token_limit_for_context(context_type, content, capacity)
-    primary = model_id or MODEL_ID
-    models_to_try = [primary] + [m for m in BACKUP_MODELS if m != primary]
+    models_to_try = _models_to_try(model_id, base_url)
     last_err: Optional[Exception] = None
 
     for model in models_to_try:
@@ -399,7 +563,8 @@ async def generate_answer(
                 client.chat.completions.create,
                 model=model,
                 max_tokens=max_tokens,
-                temperature=0.3,
+                temperature=DETERMINISTIC_TEMPERATURE,
+                seed=DETERMINISTIC_SEED,
                 messages=[
                     {"role": "system", "content": system},
                     {"role": "user", "content": user_msg},
@@ -408,8 +573,7 @@ async def generate_answer(
             return (msg.choices[0].message.content or "").strip()
         except Exception as e:
             last_err = e
-            err_str = str(e).lower()
-            if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str:
+            if _looks_like_model_error(e, _status_code(e)):
                 continue
             raise
 
@@ -421,6 +585,8 @@ async def generate_answer(
 def _is_rate_limit_error(err: Exception) -> bool:
     """Return True if the exception looks like an HTTP 429 rate-limit error."""
     if RateLimitError is not None and isinstance(err, RateLimitError):
+        return True
+    if getattr(err, "status_code", None) == 429:
         return True
     response = getattr(err, "response", None)
     if getattr(response, "status_code", None) == 429:
@@ -458,17 +624,21 @@ class AiStreamWorker(QThread):
         context_type: str,
         model_id: Optional[str] = None,
         capacity: Optional[int] = None,
+        base_url: Optional[str] = None,
+        api_key: Optional[str] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
         self._content = content
         self._context_type = context_type
-        self._model_id = model_id or MODEL_ID
+        self._model_id = (model_id or MODEL_ID).strip() or MODEL_ID
         self._capacity = capacity
+        self._base_url = base_url
+        self._api_key = api_key
 
     def run(self) -> None:
         try:
-            client = _get_client()
+            client = _get_client(self._base_url, self._api_key)
         except Exception as e:
             self.failed.emit(str(e))
             return
@@ -481,7 +651,7 @@ class AiStreamWorker(QThread):
         ]
         max_tokens = get_token_limit_for_context(self._context_type, self._content, self._capacity)
 
-        models_to_try = [self._model_id] + [m for m in BACKUP_MODELS if m != self._model_id]
+        models_to_try = _models_to_try(self._model_id, self._base_url)
         last_err: Optional[Exception] = None
 
         for model in models_to_try:
@@ -492,7 +662,8 @@ class AiStreamWorker(QThread):
                     stream = client.chat.completions.create(
                         model=model,
                         max_tokens=max_tokens,
-                        temperature=0.3,
+                        temperature=DETERMINISTIC_TEMPERATURE,
+                        seed=DETERMINISTIC_SEED,
                         messages=messages,
                         stream=True,
                     )
@@ -503,11 +674,21 @@ class AiStreamWorker(QThread):
                     return
                 except Exception as e:
                     last_err = e
-                    logger.warning("Groq stream with model %s failed (attempt %s): %s", model, attempts, e)
-                    err_str = str(e).lower()
-                    if "model_not_found" in err_str or "does not exist" in err_str or "404" in err_str or "not have access" in err_str:
+                    logger.warning("AI stream with model %s failed (attempt %s): %s", model, attempts, e)
+                    if _looks_like_model_error(e, _status_code(e)):
                         logger.warning("Model %s not found/accessible, trying next model...", model)
                         break
+                    if _is_auth_or_credit_error(e):
+                        # Retrying or trying backup models cannot fix a bad key
+                        # or an empty balance; surface the message immediately.
+                        self.failed.emit(
+                            _classify_api_error(
+                                e,
+                                base_url=self._base_url,
+                                model_id=model,
+                            )
+                        )
+                        return
                     if _is_rate_limit_error(e):
                         if attempts > 3:
                             break  # give up on this model after the initial try + 3 retries
@@ -522,7 +703,8 @@ class AiStreamWorker(QThread):
                         resp = client.chat.completions.create(
                             model=model,
                             max_tokens=max_tokens,
-                            temperature=0.3,
+                            temperature=DETERMINISTIC_TEMPERATURE,
+                            seed=DETERMINISTIC_SEED,
                             messages=messages,
                         )
                         body = (resp.choices[0].message.content or "").strip()
@@ -532,10 +714,18 @@ class AiStreamWorker(QThread):
                         return
                     except Exception as e2:
                         last_err = e2
-                        logger.warning("Groq non-stream fallback with model %s failed: %s", model, e2)
-                        err_str2 = str(e2).lower()
-                        if "model_not_found" in err_str2 or "does not exist" in err_str2 or "404" in err_str2 or "not have access" in err_str2:
+                        logger.warning("AI non-stream fallback with model %s failed: %s", model, e2)
+                        if _looks_like_model_error(e2, _status_code(e2)):
                             break
+                        if _is_auth_or_credit_error(e2):
+                            self.failed.emit(
+                                _classify_api_error(
+                                    e2,
+                                    base_url=self._base_url,
+                                    model_id=model,
+                                )
+                            )
+                            return
                         if _is_rate_limit_error(e2):
                             if attempts > 3:
                                 break
@@ -547,4 +737,13 @@ class AiStreamWorker(QThread):
                             continue
                     time.sleep(0.3 * attempts)
 
-        self.failed.emit(str(last_err) if last_err else "Unknown API error")
+        if last_err:
+            self.failed.emit(
+                _classify_api_error(
+                    last_err,
+                    base_url=self._base_url,
+                    model_id=self._model_id,
+                )
+            )
+        else:
+            self.failed.emit("Unknown API error")

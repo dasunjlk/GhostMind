@@ -64,8 +64,8 @@ _hiddenimports = (
         'keyring',      # API key storage (Windows Credential Manager).
         'toml',         # Config file parsing.
         'dotenv',       # .env file loading (python-dotenv).
-        'httpx',        # HTTP client for Groq API.
-        'groq',         # Groq SDK client.
+        'httpx',        # HTTP client for the OpenAI-compatible SDK.
+        'openai',       # Provider-agnostic OpenAI-compatible SDK.
     ]
 )
 
