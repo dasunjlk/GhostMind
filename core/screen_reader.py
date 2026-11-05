@@ -12,6 +12,8 @@ import numpy as np
 from PIL import Image
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
 
+from core.screen_focus import isolate_screen_text
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -181,17 +183,19 @@ class ScreenScanWorker(QThread):
             active_title = get_active_window_title()
             meeting_app = detect_meeting_app()
             text = scan_and_extract(self._monitor_id)
+            isolated = isolate_screen_text(text)
 
-            # Enrich text with active window context if available
-            combined = text
+            # Enrich the isolated question with active window context if available
+            combined = isolated
             if active_title and "ghostmind" not in active_title.lower():
                 header = f"[Active Window: {active_title}]"
                 if meeting_app:
                     header += f" [Meeting App: {meeting_app}]"
-                combined = f"{header}\n\n{text}" if text else header
+                combined = f"{header}\n\n{isolated}" if isolated else header
 
             self.finished_details.emit({
                 "ocr_text": text,
+                "isolated_text": isolated,
                 "active_window": active_title,
                 "meeting_app": meeting_app,
                 "combined_text": combined,
