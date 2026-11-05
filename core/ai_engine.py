@@ -647,11 +647,16 @@ def _is_rate_limit_error(err: Exception) -> bool:
     return "429" in text or "rate limit" in text
 
 
+MAX_MODEL_BACKOFF_SECONDS = 12.0
+
+
 def _rate_limit_backoff(err: Exception, attempt: int) -> float:
     """Seconds to wait before retrying after a rate-limit error.
 
     Honors the server's Retry-After header when present; otherwise backs off
-    exponentially (1s, 2s, 4s, ...). Always capped at 30s.
+    exponentially (1s, 2s, 4s, ...). A single delay is capped at 30s; the
+    worker additionally caps the total sleep per model (see
+    `MAX_MODEL_BACKOFF_SECONDS`).
     """
     delay = float(2 ** max(0, attempt - 1))
     response = getattr(err, "response", None)
@@ -715,6 +720,7 @@ class AiStreamWorker(QThread):
 
         for model in models_to_try:
             attempts = 0
+            backoff_total = 0.0
             while attempts < 4:  # 1 initial + up to 3 rate-limit retries
                 attempts += 1
                 try:
@@ -751,7 +757,11 @@ class AiStreamWorker(QThread):
                     if _is_rate_limit_error(e):
                         if attempts > 3:
                             break  # give up on this model after the initial try + 3 retries
-                        delay = _rate_limit_backoff(e, attempts)
+                        remaining = MAX_MODEL_BACKOFF_SECONDS - backoff_total
+                        if remaining <= 0:
+                            break
+                        delay = min(_rate_limit_backoff(e, attempts), remaining)
+                        backoff_total += delay
                         logger.warning("Rate limited on %s; retrying in %.1fs", model, delay)
                         if delay > 3:
                             self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
@@ -788,8 +798,16 @@ class AiStreamWorker(QThread):
                         if _is_rate_limit_error(e2):
                             if attempts > 3:
                                 break
-                            delay = _rate_limit_backoff(e2, attempts)
-                            logger.warning("Rate limited (non-stream) on %s; retrying in %.1fs", model, delay)
+                            remaining = MAX_MODEL_BACKOFF_SECONDS - backoff_total
+                            if remaining <= 0:
+                                break
+                            delay = min(_rate_limit_backoff(e2, attempts), remaining)
+                            backoff_total += delay
+                            logger.warning(
+                                "Rate limited (non-stream) on %s; retrying in %.1fs",
+                                model,
+                                delay,
+                            )
                             if delay > 3:
                                 self.chunk_received.emit("\n\n(rate limited, retrying...)\n\n")
                             time.sleep(delay)

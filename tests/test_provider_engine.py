@@ -247,13 +247,20 @@ class _FakeClient:
         self.chat = SimpleNamespace(completions=_Completions(self))
 
 
-def _run_worker(monkeypatch, client, base_url=None, api_key="sk-test", history=None):
+def _run_worker(
+    monkeypatch,
+    client,
+    base_url=None,
+    api_key="sk-test",
+    history=None,
+    sleep=None,
+):
     monkeypatch.setattr(
         ai_engine,
         "_get_client",
         lambda base_url=None, api_key=None: client,
     )
-    monkeypatch.setattr(ai_engine.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(ai_engine.time, "sleep", sleep or (lambda _seconds: None))
     worker = AiStreamWorker(
         "What is 2+2?",
         "manual",
@@ -417,3 +424,21 @@ class TestStreamWorker:
         assert finished == [True]
         assert len(calls) == 2
         assert calls[1]["seed"] == DETERMINISTIC_SEED
+
+    def test_rate_limit_backoff_is_capped_per_model(self, monkeypatch):
+        sleeps: list[float] = []
+        err = _http_error("rate limit", 429)
+        err.response.headers["retry-after"] = "17"
+        client = _FakeClient(error=err)
+
+        chunks, failures, _finished = _run_worker(
+            monkeypatch,
+            client,
+            base_url="https://openrouter.ai/api/v1",
+            sleep=sleeps.append,
+        )
+
+        assert sum(sleeps) <= ai_engine.MAX_MODEL_BACKOFF_SECONDS
+        assert sleeps == [ai_engine.MAX_MODEL_BACKOFF_SECONDS]
+        assert any("rate limited, retrying" in chunk for chunk in chunks)
+        assert failures
