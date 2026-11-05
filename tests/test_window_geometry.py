@@ -21,6 +21,7 @@ BASE_SETTINGS = {
     "capture_system": False,
     "session_type": "meeting",
     "ai_model": "qwen/qwen3.8-27b",
+    "api_base_url": "https://api.groq.com/openai/v1",
     "whisper_model": "base",
     "loopback_device": None,
     "hotkeys": {

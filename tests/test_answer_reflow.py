@@ -26,6 +26,11 @@ def qapp():
     return app
 
 
+@pytest.fixture(autouse=True)
+def _no_real_key(monkeypatch):
+    monkeypatch.setattr(overlay_window, "resolve_api_key", lambda **kwargs: "")
+
+
 def _measure(block: _AnswerBlock, width: int) -> int:
     block.resize(width, 200)
     QApplication.processEvents()
@@ -86,7 +91,16 @@ class _FakeStreamWorker(QObject):
 
     created: ClassVar[list] = []
 
-    def __init__(self, content, context_type, model_id=None, capacity=None, parent=None):
+    def __init__(
+        self,
+        content,
+        context_type,
+        model_id=None,
+        capacity=None,
+        base_url=None,
+        api_key=None,
+        parent=None,
+    ):
         super().__init__(parent)
         _FakeStreamWorker.created.append(capacity)
 

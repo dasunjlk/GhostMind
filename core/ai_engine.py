@@ -45,9 +45,6 @@ AVAILABLE_MODELS: List[Tuple[str, str]] = [
     ("openai/gpt-oss-20b", "GPT-OSS 20B (Fast)"),
 ]
 
-# Sentinel itemData value for the settings dropdown "＋ Add custom model…" entry.
-ADD_CUSTOM_MODEL_SENTINEL = "__add_custom_model__"
-
 # Default provider. `base_url` is the only switch between providers; no
 # provider-specific branching exists outside the Groq backup-model cascade.
 DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
@@ -284,22 +281,37 @@ def build_user_message(context_type: str, content: str) -> str:
     return f"Screen OCR text:\n\n{content}"
 
 
-def resolve_api_key(explicit: Optional[str] = None) -> str:
-    """API key lookup for the default Groq provider.
+def host_for_base_url(base_url: Optional[str] = None) -> str:
+    """Return the lower-case host[:port] for a base URL ('' when invalid)."""
+    raw = (base_url or DEFAULT_BASE_URL).strip()
+    try:
+        parsed = urlparse(raw)
+    except ValueError:
+        return ""
+    netloc = parsed.netloc or ""
+    return netloc.rsplit("@", 1)[-1].lower()
 
-    Order: explicit argument -> keyring store -> env/.env. Custom providers
-    receive their key explicitly from Settings; this fallback never applies
-    to them.
+
+def resolve_api_key(
+    explicit: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> str:
+    """API key lookup for the provider selected by `base_url`.
+
+    Order: explicit argument -> per-host keyring/plaintext store -> env/.env.
+    The `.env` `GROQ_API_KEY` fallback only applies to the default Groq URL;
+    custom providers must have their key saved in Settings.
     """
+    load_dotenv()
     key = (explicit or "").strip()
     if not key:
         try:
-            from utils.key_store import load_key
+            from utils.key_store import load_key_for
 
-            key = load_key().strip()
+            key = load_key_for(host_for_base_url(base_url)).strip()
         except Exception as e:
             logger.warning("key_store load failed: %s", e)
-    if not key:
+    if not key and _is_default_provider(base_url):
         key = os.environ.get("GROQ_API_KEY", "").strip()
     return key
 
@@ -310,11 +322,15 @@ _NO_KEY_MSG = "No API key found. Open Settings -> API, paste your key, then Save
 def _host_for(base_url: Optional[str]) -> str:
     """Best-effort host label used in user-facing error messages."""
     raw = (base_url or DEFAULT_BASE_URL).strip()
-    try:
-        host = urlparse(raw).netloc
-    except ValueError:
-        host = ""
+    host = host_for_base_url(raw)
     return host or raw or "the provider"
+
+
+def model_unavailable_message(model_id: str) -> str:
+    return (
+        f"Model '{model_id}' isn't available under this key — "
+        "pick another model in Settings → API."
+    )
 
 
 def normalize_base_url(base_url: Optional[str] = None) -> str:
@@ -430,10 +446,7 @@ def _classify_api_error(
         return f"Rate limit reached on {host} — wait a moment and try again."
     if _looks_like_model_error(err, status):
         model = (model_id or "").strip() or "that model"
-        return (
-            f"Model '{model}' isn't available under this key — "
-            "pick another model in Settings → API."
-        )
+        return model_unavailable_message(model)
     if status is not None and 500 <= status <= 599:
         return f"{host} had a server error — try again in a moment."
     if status == 404:
@@ -484,10 +497,7 @@ def validate_key_and_model(
         return False, _classify_api_error(e, base_url=base_url, model_id=model_id)
     model = (model_id or MODEL_ID).strip()
     if ids and model not in ids:
-        return False, (
-            f"Model '{model}' isn't available under this key — "
-            "pick another model in Settings → API."
-        )
+        return False, model_unavailable_message(model)
     return True, f"API key works - '{model}' is ready."
 
 
@@ -497,8 +507,8 @@ def _get_client(
 ):
     """Build an OpenAI-compatible client for `base_url`.
 
-    When no explicit key is given, the default Groq lookup order applies
-    (keyring -> env/.env). Custom providers always pass their key explicitly.
+    When no explicit key is given, the per-host store is consulted and the
+    `.env` `GROQ_API_KEY` fallback is used only for the default Groq URL.
     """
     load_dotenv()
     if OpenAI is None:
@@ -510,10 +520,52 @@ def _get_client(
         url = normalize_base_url(base_url)
     except ValueError as e:
         raise RuntimeError(str(e)) from e
-    key = (api_key or "").strip() or resolve_api_key()
+    key = (api_key or "").strip() or resolve_api_key(base_url=url)
     if not key:
         raise RuntimeError(_NO_KEY_MSG)
     return OpenAI(base_url=url, api_key=key)
+
+
+def discover_models(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model_id: Optional[str] = None,
+) -> Tuple[bool, str, List[str]]:
+    """Validate a base URL/key and return the provider's model IDs.
+
+    Uses one `models.list` call (no chat completion, no token usage). When
+    `model_id` is given and the provider returns a catalog, the model must be
+    present. Returns `(ok, human-readable message, sorted model IDs)` and
+    never raises.
+    """
+    load_dotenv()
+    try:
+        url = normalize_base_url(base_url)
+    except ValueError as e:
+        return False, str(e), []
+    try:
+        client = _get_client(url, api_key)
+    except Exception as e:
+        return False, str(e), []
+    try:
+        response = client.models.list()
+    except Exception as e:
+        return False, _classify_api_error(e, base_url=url, model_id=model_id), []
+
+    ids = sorted(
+        {
+            str(getattr(model, "id", "")).strip()
+            for model in (getattr(response, "data", None) or [])
+            if str(getattr(model, "id", "")).strip()
+        }
+    )
+    model = (model_id or "").strip()
+    if ids and model and model not in ids:
+        return False, model_unavailable_message(model), []
+    host = _host_for(url)
+    if not ids:
+        return True, f"Connected to {host} — no models were returned.", []
+    return True, f"Connected to {host} — {len(ids)} models available.", ids
 
 
 def get_token_limit_for_context(

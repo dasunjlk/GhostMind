@@ -10,7 +10,7 @@ import pytest
 
 import core.ai_engine as ai_engine
 from core.ai_engine import (
-    ADD_CUSTOM_MODEL_SENTINEL,
+    DEFAULT_BASE_URL,
     _classify_api_error,
     resolve_api_key,
     validate_key_and_model,
@@ -49,7 +49,9 @@ def clean_env(monkeypatch):
 
 class TestValidateNoKey:
     def test_no_key_anywhere(self, monkeypatch):
-        monkeypatch.setattr(ai_engine, "resolve_api_key", lambda explicit="": "")
+        monkeypatch.setattr(
+            ai_engine, "resolve_api_key", lambda explicit=None, base_url=None: ""
+        )
         ok, msg = validate_key_and_model()
         assert ok is False
         assert "Settings" in msg or "console.groq.com" in msg
@@ -102,7 +104,9 @@ class TestValidateModelMatch:
 
     def test_openai_not_installed(self, monkeypatch):
         monkeypatch.setattr(ai_engine, "OpenAI", None)
-        monkeypatch.setattr(ai_engine, "resolve_api_key", lambda explicit="": "gsk_ok")
+        monkeypatch.setattr(
+            ai_engine, "resolve_api_key", lambda explicit=None, base_url=None: "gsk_ok"
+        )
         ok, msg = validate_key_and_model()
         assert ok is False
         assert "pip install openai" in msg
@@ -129,7 +133,7 @@ class TestResolveApiKey:
         """Keep tests off the developer's real Windows Credential Manager key."""
         import utils.key_store
 
-        monkeypatch.setattr(utils.key_store, "load_key", lambda: "")
+        monkeypatch.setattr(utils.key_store, "load_key_for", lambda host: "")
 
     def test_explicit_beats_everything(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "env_key")
@@ -143,7 +147,7 @@ class TestResolveApiKey:
         monkeypatch.setenv("GROQ_API_KEY", "env_key")
         assert resolve_api_key("   ") == "env_key"
 
-
-class TestSentinel:
-    def test_sentinel_is_not_a_real_model(self):
-        assert ADD_CUSTOM_MODEL_SENTINEL not in [m for m, _ in ai_engine.AVAILABLE_MODELS]
+    def test_env_fallback_is_scoped_to_groq_default(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "env_key")
+        assert resolve_api_key(base_url=DEFAULT_BASE_URL) == "env_key"
+        assert resolve_api_key(base_url="https://openrouter.ai/api/v1") == ""
