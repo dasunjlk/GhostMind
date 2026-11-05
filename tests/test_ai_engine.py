@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from core.ai_engine import (
+    DEFAULT_BASE_URL,
     DEFAULT_CAPACITY,
+    DETERMINISTIC_SEED,
+    DETERMINISTIC_TEMPERATURE,
     MAX_TOKENS,
     _classify_screen_text,
+    _models_to_try,
     _screen_system_addon,
     build_system_prompt,
     build_user_message,
@@ -257,3 +261,26 @@ class TestLengthHints:
     def test_manual_gets_hint(self):
         prompt = build_system_prompt("manual", "What is 2+2?", DEFAULT_CAPACITY * 2)
         assert "large display" in prompt
+
+
+class TestProviderDefaults:
+    def test_default_base_url_is_groq(self):
+        assert DEFAULT_BASE_URL == "https://api.groq.com/openai/v1"
+
+    def test_deterministic_settings(self):
+        assert DETERMINISTIC_TEMPERATURE == 0.0
+        assert DETERMINISTIC_SEED == 7
+
+    def test_groq_uses_backup_models(self):
+        models = _models_to_try("qwen/qwen3.8-27b", DEFAULT_BASE_URL)
+        assert models[0] == "qwen/qwen3.8-27b"
+        assert "qwen/qwen3.6-27b" in models
+        assert "openai/gpt-oss-120b" in models
+
+    def test_custom_provider_never_uses_groq_backups(self):
+        models = _models_to_try("some/model", "https://openrouter.ai/api/v1")
+        assert models == ["some/model"]
+
+    def test_trailing_slash_still_counts_as_default(self):
+        models = _models_to_try("qwen/qwen3.8-27b", DEFAULT_BASE_URL + "/")
+        assert len(models) > 1

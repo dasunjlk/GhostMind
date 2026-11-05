@@ -26,7 +26,15 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import ADD_CUSTOM_MODEL_SENTINEL, AVAILABLE_MODELS, DEFAULT_MODEL
+from core.ai_engine import (
+    ADD_CUSTOM_MODEL_SENTINEL,
+    AVAILABLE_MODELS,
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    DETERMINISTIC_SEED,
+    DETERMINISTIC_TEMPERATURE,
+    _get_client,
+)
 from core.audio_listener import get_input_devices
 from core.screen_reader import get_monitors
 from utils import key_store
@@ -641,14 +649,14 @@ class SettingsPanel(QWidget):
 
 
 def run_api_self_test(api_key: str, on_done: Callable[[bool, str], None]) -> None:
-    """Synchronous API check."""
+    """Synchronous API check against the default provider."""
     try:
-        from groq import Groq
-
-        client = Groq(api_key=api_key)
+        client = _get_client(DEFAULT_BASE_URL, api_key)
         client.chat.completions.create(
             model=DEFAULT_MODEL,
             max_tokens=16,
+            temperature=DETERMINISTIC_TEMPERATURE,
+            seed=DETERMINISTIC_SEED,
             messages=[{"role": "user", "content": "Reply with OK only."}],
         )
         on_done(True, "API key works.")

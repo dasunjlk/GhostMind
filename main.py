@@ -60,14 +60,14 @@ def check_dependencies() -> List[str]:
             "  Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
         )
 
-    # Groq SDK
+    # OpenAI-compatible SDK (default provider: Groq)
     try:
-        from groq import Groq  # noqa: F401
+        from openai import OpenAI  # noqa: F401
     except ImportError:
         warnings.append(
-            "groq package not installed.\n"
+            "openai package not installed.\n"
             "  AI answers will not work.\n"
-            "  Install: pip install groq"
+            "  Install: pip install openai"
         )
 
     # The Groq API key is optional at startup — new users paste one in
