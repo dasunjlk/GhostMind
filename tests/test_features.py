@@ -42,7 +42,7 @@ class TestVersionMetadata:
         assert version.__app_name__ == "GhostMind"
         assert "Dasun" in version.__author__
         assert "dasunjlk/GhostMind" in version.__github__
-        assert "© 2024-2026" in version.__copyright__
+        assert "© 2025-2026" in version.__copyright__
 
 
 class TestModelConfiguration:

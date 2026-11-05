@@ -1,21 +1,16 @@
-GhostMind v1.0.1 — a small patch focused on a smoother first run.
+GhostMind v1.0.2 — reliability patch for first run setup.
 
 ### Fixed
-
-- Removed the startup "No Groq API key found" dependency warning. New users can now launch GhostMind and add their key whenever they are ready via **Settings → API**.
+- Fixed a startup warning that could appear behind the overlay and block all
+  clicks, making Settings impossible to open.
+- Settings is now reachable from the system tray, and the app shows a clear
+  "Add API key" prompt on first run.
+- Click-through mode now has a visible indicator and a tray/hotkey recovery path.
+- API key save errors are reported in Settings instead of silently closing it.
 
 ### Install
+- Installer: GhostMind-Setup-1.0.2.exe
+- Portable: GhostMind-Portable-1.0.2.zip
+- Verify downloads against SHA256SUMS.txt.
 
-- **Installer:** `GhostMind-Setup-1.0.1.exe` — per-user install (`%LOCALAPPDATA%\GhostMind`), no admin rights required.
-- **Portable:** `GhostMind-Portable-1.0.1.zip` — extract and run `ghostmind.exe`.
-- **Verify:** compare downloads against `SHA256SUMS.txt`.
-
-### Requirements
-
-- Windows 10/11 (x64)
-- Tesseract OCR installed separately (required for screen scanning)
-- A Groq API key — add it in **Settings → API** on first launch
-
-The installer is unsigned, so Windows SmartScreen may show a warning — choose **More info → Run anyway**.
-
-**Full changelog:** https://github.com/dasunjlk/GhostMind/compare/v1.0.0...v1.0.1
+The installer is unsigned, so SmartScreen may warn — choose More info → Run anyway.

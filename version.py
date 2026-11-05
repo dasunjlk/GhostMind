@@ -3,8 +3,8 @@ GhostMind — Version and metadata constants.
 """
 
 __app_name__ = "GhostMind"
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __author__ = "Dasun Jayasanka"
-__copyright__ = "© 2024-2026 Dasun Jayasanka"
+__copyright__ = "© 2025-2026 Dasun Jayasanka"
 __github__ = "https://github.com/dasunjlk/GhostMind"
 __description__ = "Stealth AI Overlay for Windows"
