@@ -166,6 +166,7 @@ class AnswerPanel(QWidget):
         title.setStyleSheet("color:#00FF88;font-weight:bold;font-size:13px;")
         clear_btn = QPushButton("Clear")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setToolTip("Also forgets this session's conversation.")
         clear_btn.setStyleSheet(
             "QPushButton { background:#1A1A1A;color:#E0E0E0;border:1px solid #333;padding:3px 10px; border-radius:3px; font-size:11px; }"
             "QPushButton:hover { background:#2A2A2A;color:#FFF; }"
@@ -312,11 +313,14 @@ class AnswerPanel(QWidget):
             self._current_block.set_streaming_plain(self._stream_buffer)
             self._scroll_to_bottom()
 
-    def end_stream_success(self) -> None:
+    def end_stream_success(self) -> str:
+        """Finalize the active answer and return its plain text."""
+        text = self._stream_buffer
         if self._current_block:
-            self._current_block.finalize_markdown(self._stream_buffer)
+            self._current_block.finalize_markdown(text)
         self._current_block = None
         self._stream_buffer = ""
+        return text
 
     def end_stream_error(self, message: str) -> None:
         self._hide_thinking()
