@@ -74,8 +74,10 @@ _hiddenimports = (
 # ---------------------------------------------------------------------------
 
 _datas = [
-    # Application icon (used by overlay window + tray icon).
+    # Application icon (used by overlay window + tray icon). icon_256.png is
+    # the tray's preferred asset; icon.ico backs the window icon.
     ('assets/icon.ico', 'assets'),
+    ('assets/icon_256.png', 'assets'),
     # License file (included in installer per release plan R-01).
     ('LICENSE', '.'),
 ]
@@ -170,6 +172,7 @@ exe = EXE(
     [],
     exclude_binaries=True,  # ONEDIR: payload lives in _internal, exe stays small
     name='ghostmind',
+    icon='assets\\icon.ico',  # exe icon: Explorer, taskbar, Windows search (C9)
     debug=False,
     strip=False,
     upx=True,

@@ -222,7 +222,19 @@ def save_settings(data: Dict[str, Any]) -> None:
 
 
 def _create_tray_icon() -> QIcon:
-    """Create a green-circle tray icon with 'G' letter programmatically."""
+    """System-tray icon from the bundled asset (C9).
+
+    Loads assets/icon_256.png (icon.ico as fallback) from the repo root when
+    running from source and from the PyInstaller bundle directory when
+    frozen. The drawn green-circle glyph is kept only as a last-resort
+    fallback for broken checkouts.
+    """
+    base = Path(getattr(sys, "_MEIPASS", REPO_ROOT))
+    for name in ("icon_256.png", "icon.ico"):
+        candidate = base / "assets" / name
+        if candidate.is_file():
+            return QIcon(str(candidate))
+    logger.warning("Tray icon asset missing; using the drawn fallback glyph")
     size = 64
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
