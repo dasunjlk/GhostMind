@@ -444,7 +444,7 @@ def download_installer(
     setup, checksums = pick_release_assets(release)
     if setup is None:
         _fail(state_path, "The installer asset was not found on the release page. "
-                          "Use 'Open release page in browser' to download it manually.")
+                          "The next update check will retry automatically.")
     if checksums is None:
         _fail(state_path, "Checksums file (SHA256SUMS.txt) missing on the release. "
                           "Refusing to run an unverified installer.")
@@ -463,7 +463,7 @@ def download_installer(
             except OSError:
                 pass
             _fail(state_path, "Checksum mismatch — the download is corrupt or tampered with. "
-                              "It was deleted. Use 'Open release page in browser' to retry manually.")
+                              "It was deleted. The next update check will retry automatically.")
     except UpdaterError:
         raise
     except Exception as e:
