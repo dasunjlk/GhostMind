@@ -146,3 +146,43 @@ class TestInstallerLaunch:
 
         assert launched == [popup._installer_path]
         assert quit_calls == [True], "app must quit so Inno Setup can replace files"
+
+
+class TestGraceBannerSuppression:
+    """C6: a grace-phase check must show the in-app banner, never the popup."""
+
+    @pytest.fixture
+    def controller(self, qapp, monkeypatch):
+        import main as app_main
+
+        monkeypatch.setattr(app_main, "resolve_api_key", lambda **kwargs: "")
+        monkeypatch.setattr(
+            app_main.GhostMindController, "_register_hotkeys", lambda self: None
+        )
+        ctrl = app_main.GhostMindController(qapp, dict(app_main.DEFAULT_SETTINGS))
+        ctrl._update_timer.stop()
+        yield ctrl
+        ctrl._update_timer.stop()
+        if ctrl._update_popup is not None:
+            ctrl._update_popup.close()
+            ctrl._update_popup.deleteLater()
+        ctrl.hotkeys.unregister_all()
+        ctrl.overlay.close_event_allowed = True
+        ctrl.overlay.close()
+        ctrl._tray.hide()
+        ctrl.deleteLater()
+        qapp.processEvents()
+
+    def test_grace_check_does_not_open_popup(self, controller):
+        controller.overlay.show()
+        check = UpdateCheck(
+            tag="1.1.0",
+            notes="Test notes",
+            assets=[],
+            update_available=True,
+            locked=False,
+            should_popup=True,
+        )
+        controller._on_update_check_done(check)
+        assert controller._update_popup is None
+        assert controller.overlay._update_banner.isVisible()
