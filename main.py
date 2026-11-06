@@ -366,6 +366,11 @@ class GhostMindController(QObject):
             self._open_tesseract_download
         )
         self.overlay.settings_closed.connect(self._refresh_api_key_cta)
+        self.overlay.update_whats_new_requested.connect(
+            self._on_update_banner_details
+        )
+        self.overlay.update_now_requested.connect(self._on_update_banner_details)
+        self.overlay.update_later_requested.connect(self._on_update_banner_later)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -684,8 +689,34 @@ class GhostMindController(QObject):
             )
         if result.locked:
             self._enter_update_lock(result)
-        elif result.should_popup:
-            self._show_update_popup(result, locked=False)
+        else:
+            # C6: the grace phase surfaces as an in-app banner, not a popup.
+            self._show_update_banner(result)
+
+    def _show_update_banner(self, check: Any) -> None:
+        """Show the in-app banner unless this version is currently snoozed."""
+        state = getattr(check, "state", None) or {}
+        now = int(getattr(check, "now", 0) or time.time())
+        if now < int(state.get("snooze_until_epoch") or 0):
+            self.overlay.hide_update_banner()
+            return
+        self.overlay.show_update_banner(str(getattr(check, "tag", "") or ""))
+
+    def _on_update_banner_details(self) -> None:
+        """'What's New' and 'Update' both open the details popup.
+
+        C7/C8 will split these flows (pre-downloaded install, plain-language
+        What's New); until then the popup is the single details surface.
+        """
+        if self._last_update_check is None or not self._last_update_check.update_available:
+            return
+        self._show_update_popup(
+            self._last_update_check, locked=bool(self._last_update_check.locked)
+        )
+
+    def _on_update_banner_later(self) -> None:
+        updater.record_snooze()
+        self.overlay.hide_update_banner()
 
     def _show_update_popup(self, check: Any, locked: bool) -> None:
         # Never stack popups (6h timer can fire while one is open).
@@ -718,6 +749,7 @@ class GhostMindController(QObject):
         state = updater.load_state()
         if int(state.get("snooze_until_epoch") or 0) > time.time():
             self._restore_from_update_lock()
+            self.overlay.hide_update_banner()
 
     def _enter_update_lock(self, check: Any) -> None:
         """Grace expired: hide overlay, kill hotkeys, reduce tray, force popup."""
@@ -725,6 +757,7 @@ class GhostMindController(QObject):
             return
         self._update_locked = True
         logger.warning("Update lock engaged (newer version %s, grace expired)", check.tag)
+        self.overlay.hide_update_banner()
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
         self.overlay.setEnabled(False)

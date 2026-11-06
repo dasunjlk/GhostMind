@@ -64,6 +64,7 @@ from ui.click_through_banner import ClickThroughBanner
 from ui.dependency_banner import DependencyBanner
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
+from ui.update_banner import UpdateBanner
 
 
 class Edge(IntFlag):
@@ -307,6 +308,9 @@ class OverlayWindow(QMainWindow):
     summarize_meeting_requested = pyqtSignal()
     install_tesseract_requested = pyqtSignal()
     settings_closed = pyqtSignal()
+    update_whats_new_requested = pyqtSignal()
+    update_now_requested = pyqtSignal()
+    update_later_requested = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -323,6 +327,7 @@ class OverlayWindow(QMainWindow):
         self._next_worker_id = 0
         self._visible_target = True
         self.close_event_allowed = True
+        self._update_banner_active = False
         self._opacity_anim: Optional[QVariantAnimation] = None
         self._restoring_geometry = False
         self._geometry_save_timer = QTimer(self)
@@ -471,6 +476,14 @@ class OverlayWindow(QMainWindow):
         hl.addWidget(btn_set)
 
         root.addWidget(header)
+
+        self._update_banner = UpdateBanner()
+        self._update_banner.whats_new_requested.connect(
+            self.update_whats_new_requested.emit
+        )
+        self._update_banner.update_requested.connect(self.update_now_requested.emit)
+        self._update_banner.later_requested.connect(self.update_later_requested.emit)
+        root.addWidget(self._update_banner)
 
         self._ct_banner = ClickThroughBanner()
         self._ct_banner.disable_requested.connect(
@@ -746,6 +759,17 @@ class OverlayWindow(QMainWindow):
     def show_dependency_warnings(self, warnings: list[str]) -> None:
         self._dep_banner.show_warnings(warnings)
 
+    def show_update_banner(self, version: str) -> None:
+        """Mark the update banner active; visible only while Settings is closed."""
+        self._update_banner_active = True
+        self._update_banner.set_version(version)
+        if not self.is_settings_open():
+            self._update_banner.show()
+
+    def hide_update_banner(self) -> None:
+        self._update_banner_active = False
+        self._update_banner.hide()
+
     def set_api_key_missing(self, missing: bool) -> None:
         self._answer_panel.set_api_key_missing(missing)
 
@@ -756,6 +780,7 @@ class OverlayWindow(QMainWindow):
             self.click_through_changed.emit(False)
         if self._stack.currentIndex() != 1:
             self._dep_banner.hide()
+            self._update_banner.hide()
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()
@@ -774,6 +799,8 @@ class OverlayWindow(QMainWindow):
         if self._stack.currentIndex() == 1:
             self._settings_panel.hide()
             self._stack.setCurrentIndex(0)
+        if self._update_banner_active:
+            self._update_banner.show()
         self.settings_closed.emit()
 
     def _toggle_settings(self) -> None:
@@ -963,6 +990,15 @@ class OverlayWindow(QMainWindow):
         rect = QRect(self._ct_banner.mapToGlobal(QPoint(0, 0)), self._ct_banner.size())
         return rect.contains(_global_cursor_pos())
 
+    def _pointer_in_update_banner(self) -> bool:
+        """True while the cursor is over the update banner."""
+        if self._update_banner.isHidden():
+            return False
+        rect = QRect(
+            self._update_banner.mapToGlobal(QPoint(0, 0)), self._update_banner.size()
+        )
+        return rect.contains(_global_cursor_pos())
+
     def _sync_click_guard_timer(self) -> None:
         """Run the guard poll only while click-through is on and the window is shown."""
         if self._click_through_enabled() and self.isVisible():
@@ -973,7 +1009,8 @@ class OverlayWindow(QMainWindow):
             self._click_guard_interactive = False
 
     def _update_click_guard(self) -> None:
-        """Keep the header, click-through banner, and open Settings clickable.
+        """Keep the header, update banner, click-through banner, and open
+        Settings clickable.
 
         The rest of the overlay stays transparent and passes clicks through.
         """
@@ -985,6 +1022,7 @@ class OverlayWindow(QMainWindow):
                 self.is_settings_open()
                 or self._pointer_in_header()
                 or self._pointer_in_click_through_banner()
+                or self._pointer_in_update_banner()
             )
         )
         if interactive != self._click_guard_interactive:
