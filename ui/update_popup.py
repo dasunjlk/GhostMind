@@ -12,14 +12,14 @@ screen shares — no WDA_EXCLUDEFROMCAPTURE / stealth flags are applied here.
 """
 from __future__ import annotations
 
+import html
 import logging
 import os
 import threading
 from pathlib import Path
 from typing import Any, Optional
 
-from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
-from PyQt6.QtGui import QDesktopServices
+from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QApplication,
     QDialog,
@@ -34,6 +34,7 @@ from PyQt6.QtWidgets import (
 
 import utils.updater as updater
 from utils.updater import MAX_CONSECUTIVE_FAILURES
+from utils.whatsnew import extract_whatsnew
 from version import __version__
 
 logger = logging.getLogger(__name__)
@@ -142,12 +143,17 @@ class UpdatePopup(QDialog):
 
         notes = QTextEdit()
         notes.setReadOnly(True)
-        notes.setPlainText(self._check.notes or "No release notes provided.")
+        notes.setHtml(_whats_new_html(self._check.notes))
         notes.setStyleSheet(
             "QTextEdit{background:#0E0E0E;color:#BBBBBB;border:1px solid #1E3A2B;"
             "border-radius:4px;font-size:11px;}"
+            "h3{color:#00FF88;margin:2px 0 6px 0;font-size:12px;}"
+            "ul{margin:0 0 0 14px;padding-left:10px;}"
+            "li{color:#BBBBBB;margin-bottom:5px;}"
+            "p{color:#777777;}"
         )
         notes.setMaximumHeight(220)
+        self._notes_view = notes
         root.addWidget(notes, 1)
 
         self._status = QLabel("")
@@ -182,15 +188,6 @@ class UpdatePopup(QDialog):
         buttons.addWidget(self._valve_btn)
 
         buttons.addStretch(1)
-
-        page_btn = QPushButton("Open release page in browser")
-        page_btn.setStyleSheet(
-            "QPushButton{background:#141414;color:#00AAFF;border:1px solid #113;"
-            "padding:6px 12px;border-radius:4px;font-size:11px;}"
-            "QPushButton:hover{background:#101820;}"
-        )
-        page_btn.clicked.connect(self._open_release_page)
-        buttons.addWidget(page_btn)
 
         if not self._locked:
             later_btn = QPushButton("Later")
@@ -308,9 +305,6 @@ class UpdatePopup(QDialog):
             self._status.setText(f"● Could not start installer: {e}")
             self._status.setStyleSheet("color:#FF5555;font-size:11px;")
 
-    def _open_release_page(self) -> None:
-        QDesktopServices.openUrl(_github_releases_url())
-
     def _on_safety_valve(self) -> None:
         """24h unlock (plan 3.6): re-locks automatically afterwards."""
         import time
@@ -328,5 +322,10 @@ class UpdatePopup(QDialog):
         self._valve_btn.setVisible(show)
 
 
-def _github_releases_url() -> QUrl:
-    return QUrl(updater.DEFAULT_UPDATE_URL.replace("/releases/latest", "/releases"))
+def _whats_new_html(notes: str) -> str:
+    """Render the release body as a plain-language 'What's New' list (C8)."""
+    bullets = extract_whatsnew(notes or "")
+    if not bullets:
+        return "<p>No highlights provided for this release.</p>"
+    items = "".join(f"<li>{html.escape(b)}</li>" for b in bullets)
+    return f"<h3>What's New</h3><ul>{items}</ul>"

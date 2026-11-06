@@ -8,7 +8,7 @@ import json
 from typing import List
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QDialog
+from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
 
 import utils.updater as updater
 from ui.update_popup import UpdatePopup
@@ -257,3 +257,79 @@ class TestPreDownloadedInstaller:
         popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
         assert popup._update_btn.text() == "Update Now"
         assert popup._installer_path is None
+
+
+_WHATS_NEW_BODY = (
+    "GhostMind v1.1.0 — choose your AI provider.\n"
+    "\n"
+    "### What's New\n"
+    "- **Any AI provider**: add a Base URL and API key\n"
+    "- `Steady answers`: same question, same answer\n"
+    "\n"
+    "### Install\n"
+    "- **Installer:** `GhostMind-Setup-1.1.0.exe` — per-user install\n"
+    "- **Verify:** compare downloads against `SHA256SUMS.txt`\n"
+)
+
+
+class TestWhatsNewUI:
+    """C8: the popup shows plain-language bullets, never raw markdown."""
+
+    def test_popup_renders_whats_new_bullets(self, qapp):
+        check = UpdateCheck(
+            tag="1.1.0", notes=_WHATS_NEW_BODY, assets=[], update_available=True
+        )
+        popup = UpdatePopup(check, locked=False)
+        text = popup._notes_view.toPlainText()
+
+        assert "What's New" in text
+        assert "Any AI provider: add a Base URL and API key" in text
+        assert "Steady answers: same question, same answer" in text
+
+    def test_popup_hides_raw_markdown_and_packaging(self, qapp):
+        check = UpdateCheck(
+            tag="1.1.0", notes=_WHATS_NEW_BODY, assets=[], update_available=True
+        )
+        popup = UpdatePopup(check, locked=False)
+        text = popup._notes_view.toPlainText()
+
+        assert "###" not in text
+        assert "**" not in text
+        assert "Installer:" not in text
+        assert "SHA256SUMS" not in text
+
+    def test_browser_button_is_gone(self, qapp):
+        popup = UpdatePopup(_check(locked=False), locked=False)
+        texts = [b.text() for b in popup.findChildren(QPushButton)]
+        assert "Open release page in browser" not in texts
+
+    def test_grace_buttons_are_update_and_later_only(self, qapp, tmp_path):
+        popup = UpdatePopup(
+            _check(locked=False), locked=False, state_path=tmp_path / "s.json"
+        )
+        visible = {
+            b.text()
+            for b in popup.findChildren(QPushButton)
+            if not b.isHidden()
+        }
+        assert visible == {"Update Now", "Later"}
+
+    def test_locked_buttons_are_update_only(self, qapp, tmp_path):
+        popup = UpdatePopup(
+            _check(locked=True), locked=True, state_path=tmp_path / "s.json"
+        )
+        visible = {
+            b.text()
+            for b in popup.findChildren(QPushButton)
+            if not b.isHidden()
+        }
+        assert visible == {"Update Now"}
+
+    def test_locked_phase_still_blocks_close_and_valves_later(self, qapp, spies):
+        """Regression: C8 must not disturb the locked-phase contract."""
+        popup = UpdatePopup(_check(locked=True), locked=True)
+        popup.show()
+        popup.reject()
+        popup.close()
+        assert spies == [], "locked dialog must not record a snooze on close"
+        assert popup.isVisible()
