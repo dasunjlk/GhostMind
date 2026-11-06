@@ -4,6 +4,7 @@ Uses a real QApplication (no exec), spies on the state recorders, no network.
 """
 from __future__ import annotations
 
+import json
 from typing import List
 
 import pytest
@@ -186,3 +187,73 @@ class TestGraceBannerSuppression:
         controller._on_update_check_done(check)
         assert controller._update_popup is None
         assert controller.overlay._update_banner.isVisible()
+
+
+class TestPreDownloadedInstaller:
+    """C7: the popup skips downloading when the version is already fetched,
+    SHA-256 verified, and still on disk."""
+
+    def _seed(self, tmp_path, tag: str = "1.1.0", with_file: bool = True):
+        exe = tmp_path / f"GhostMind-Setup-{tag}.exe"
+        if with_file:
+            exe.write_bytes(b"MZ" + b"A" * 1000)
+        state_file = tmp_path / "state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "downloaded_version": tag,
+                    "downloaded_path": str(exe),
+                    "downloaded_sha_ok": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return exe, state_file
+
+    def test_popup_reuses_pre_downloaded_installer(self, qapp, spies, tmp_path):
+        exe, state_file = self._seed(tmp_path)
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._installer_path == str(exe)
+        assert popup._update_btn.text() == "Restart installer"
+        assert "already downloaded" in popup._status.text()
+
+    def test_clicking_pre_downloaded_runs_installer(
+        self, qapp, spies, tmp_path, monkeypatch
+    ):
+        import ui.update_popup as popup_mod
+
+        exe, state_file = self._seed(tmp_path)
+        launched: List[str] = []
+        monkeypatch.setattr(
+            popup_mod.os, "startfile", lambda p: launched.append(str(p)), raising=False
+        )
+        quit_calls: List[bool] = []
+
+        class FakeApp:
+            def quit(self):
+                quit_calls.append(True)
+
+        fake_qapp = type(
+            "FakeQApplication",
+            (),
+            {"instance": staticmethod(lambda: FakeApp())},
+        )
+        monkeypatch.setattr(popup_mod, "QApplication", fake_qapp)
+
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        popup._update_btn.click()
+        assert launched == [str(exe)]
+        assert quit_calls == [True]
+        assert "popup" in spies, "installer launch must record the popup"
+
+    def test_missing_pre_download_falls_back_to_normal_flow(self, qapp, spies, tmp_path):
+        _exe, state_file = self._seed(tmp_path, with_file=False)
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._update_btn.text() == "Update Now"
+        assert popup._installer_path is None
+
+    def test_pre_download_for_other_version_ignored(self, qapp, spies, tmp_path):
+        _exe, state_file = self._seed(tmp_path, tag="9.9.9")
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._update_btn.text() == "Update Now"
+        assert popup._installer_path is None

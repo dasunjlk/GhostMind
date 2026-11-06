@@ -83,3 +83,12 @@ class UpdateBanner(QWidget):
         """Point the banner at a specific remote version, e.g. '1.1.0'."""
         v = str(version or "").strip()
         self._label.setText(f"Version {v} is available" if v else "Update available")
+
+    def set_ready(self, version: str) -> None:
+        """C7 ready state: the installer is downloaded, verified, and one
+        click away. 'Update' becomes 'Restart & install'."""
+        v = str(version or "").strip()
+        self._label.setText(
+            f"Version {v} is ready to install" if v else "Update ready to install"
+        )
+        self._update_btn.setText("Restart & install")

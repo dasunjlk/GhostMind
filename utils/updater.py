@@ -83,6 +83,10 @@ def default_state() -> Dict[str, object]:
         "failed_attempts": 0,
         "last_check_epoch": 0,
         "last_release_json": None,
+        # C7 auto-download bookkeeping: the installer the app already fetched.
+        "downloaded_version": "",
+        "downloaded_path": "",
+        "downloaded_sha_ok": False,
     }
 
 
@@ -369,7 +373,36 @@ def verify_sha256(path: Path, checksums_text: str) -> bool:
 
 
 def installer_dest(version: str) -> Path:
-    return Path(os.environ.get("TEMP", os.getcwd())) / f"GhostMind-Setup-{version}.exe"
+    """Where installers are stored: the app-managed updates folder (C7).
+
+    Replaces the old %TEMP% location — a temp file can vanish on reboot and
+    lives in a user-visible directory; the updates folder is the app's own
+    data area and persists until the update is installed.
+    """
+    return app_paths.updates_dir() / f"GhostMind-Setup-{version}.exe"
+
+
+def cleanup_old_installers(keep: Path) -> List[Path]:
+    """Delete other GhostMind-Setup-*.exe files in the updates folder.
+
+    Keeps only the newest verified download so the folder never grows with
+    stale installers. Returns the paths that were removed.
+    """
+    keep = Path(keep)
+    removed: List[Path] = []
+    try:
+        for candidate in sorted(keep.parent.glob("GhostMind-Setup-*.exe")):
+            if candidate.resolve() == keep.resolve():
+                continue
+            try:
+                candidate.unlink()
+                removed.append(candidate)
+                logger.info("Removed old installer download: %s", candidate)
+            except OSError as e:
+                logger.warning("Could not remove old installer %s: %s", candidate, e)
+    except OSError as e:
+        logger.warning("Could not scan %s for old installers: %s", keep.parent, e)
+    return removed
 
 
 def download_file(
@@ -441,6 +474,14 @@ def download_installer(
         _fail(state_path, f"Download failed: {e}")
 
     reset_failed_attempts(state_path)
+    # C7: remember the verified download so the banner can flip to
+    # "ready to install" and survive restarts without re-fetching.
+    state = load_state(state_path)
+    state["downloaded_version"] = tag
+    state["downloaded_path"] = str(dest)
+    state["downloaded_sha_ok"] = True
+    save_state(state, state_path)
+    cleanup_old_installers(dest)
     logger.info("Installer downloaded and verified: %s", dest)
     return dest
 
