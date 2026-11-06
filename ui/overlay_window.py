@@ -759,10 +759,17 @@ class OverlayWindow(QMainWindow):
     def show_dependency_warnings(self, warnings: list[str]) -> None:
         self._dep_banner.show_warnings(warnings)
 
-    def show_update_banner(self, version: str) -> None:
-        """Mark the update banner active; visible only while Settings is closed."""
+    def show_update_banner(self, version: str, ready: bool = False) -> None:
+        """Mark the update banner active; visible only while Settings is closed.
+
+        ready=True (C7) flips it to 'Version X is ready to install' with a
+        one-click 'Restart & install' action.
+        """
         self._update_banner_active = True
-        self._update_banner.set_version(version)
+        if ready:
+            self._update_banner.set_ready(version)
+        else:
+            self._update_banner.set_version(version)
         if not self.is_settings_open():
             self._update_banner.show()
 

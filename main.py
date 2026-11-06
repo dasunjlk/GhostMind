@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import signal
 import sys
 import time
@@ -262,6 +263,33 @@ class _UpdateCheckWorker(QThread):
         self.done.emit(result)
 
 
+class _UpdateDownloadWorker(QThread):
+    """Background-downloads and SHA-256 verifies the new installer (C7).
+
+    Runs after the update banner has notified the user, so by the time they
+    click install the download is already finished. Failures are silent:
+    the banner stays "available" and the next 6h check retries.
+    """
+
+    result = pyqtSignal(bool, str)  # ok, path-or-error
+
+    def __init__(self, check: Any, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._check = check
+
+    def run(self) -> None:
+        release = {"tag_name": self._check.tag, "assets": self._check.assets}
+        try:
+            path = updater.download_installer(release)
+            self.result.emit(True, str(path))
+        except updater.UpdaterError as e:
+            logger.warning("Background update download failed: %s", e)
+            self.result.emit(False, str(e))
+        except Exception as e:
+            logger.warning("Background update download failed: %s", e)
+            self.result.emit(False, f"Download failed: {e}")
+
+
 class GhostMindController(QObject):
     """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
@@ -292,6 +320,9 @@ class GhostMindController(QObject):
         self._update_locked = False
         self._update_worker: Optional[_UpdateCheckWorker] = None
         self._update_check_balloon = False
+        # C7: background auto-download of the notified version.
+        self._update_download_worker: Optional[_UpdateDownloadWorker] = None
+        self._update_ready_path: Optional[str] = None
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
         self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
@@ -367,7 +398,7 @@ class GhostMindController(QObject):
         )
         self.overlay.settings_closed.connect(self._refresh_api_key_cta)
         self.overlay.update_whats_new_requested.connect(
-            self._on_update_banner_details
+            self._on_update_banner_whats_new
         )
         self.overlay.update_now_requested.connect(self._on_update_banner_details)
         self.overlay.update_later_requested.connect(self._on_update_banner_later)
@@ -700,19 +731,73 @@ class GhostMindController(QObject):
         if now < int(state.get("snooze_until_epoch") or 0):
             self.overlay.hide_update_banner()
             return
-        self.overlay.show_update_banner(str(getattr(check, "tag", "") or ""))
+        tag = str(getattr(check, "tag", "") or "")
+        # C7: a previously verified download for THIS version flips the
+        # banner straight to "ready to install" (survives restarts).
+        if (
+            state.get("downloaded_version") == tag
+            and state.get("downloaded_sha_ok")
+            and Path(str(state.get("downloaded_path") or "")).is_file()
+        ):
+            self._update_ready_path = str(state.get("downloaded_path"))
+            self.overlay.show_update_banner(tag, ready=True)
+            return
+        self._update_ready_path = None
+        self.overlay.show_update_banner(tag)
+        self._maybe_auto_download(check)
 
-    def _on_update_banner_details(self) -> None:
-        """'What's New' and 'Update' both open the details popup.
+    def _maybe_auto_download(self, check: Any) -> None:
+        """C7: the user has been notified — fetch the installer in the background."""
+        if self._update_download_worker is not None and self._update_download_worker.isRunning():
+            return
+        worker = _UpdateDownloadWorker(check, self)
+        self._update_download_worker = worker
+        worker.result.connect(self._on_update_download_result)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._on_update_download_worker_finished)
+        worker.start()
 
-        C7/C8 will split these flows (pre-downloaded install, plain-language
-        What's New); until then the popup is the single details surface.
-        """
+    def _on_update_download_worker_finished(self) -> None:
+        self._update_download_worker = None
+
+    def _on_update_download_result(self, ok: bool, message: str) -> None:
+        if not ok:
+            # Silent: the banner stays "available"; the next 6h check retries
+            # and record_failed_attempt has already fed the safety valve.
+            return
+        self._update_ready_path = message
+        check = self._last_update_check
+        tag = str(getattr(check, "tag", "") or "") if check is not None else ""
+        self.overlay.show_update_banner(tag, ready=True)
+
+    def _run_downloaded_installer(self, path: str) -> None:
+        """C7 one-click install: run the verified installer; the app must exit
+        so Inno Setup can replace its files (same contract as the popup flow)."""
+        try:
+            os.startfile(path)
+            updater.record_popup()
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+        except Exception as e:
+            logger.warning("Could not start downloaded installer %s: %s", path, e)
+
+    def _on_update_banner_whats_new(self) -> None:
+        """'What's New' always opens the details popup (C8 makes it read as
+        plain-language What's New bullets)."""
         if self._last_update_check is None or not self._last_update_check.update_available:
             return
         self._show_update_popup(
             self._last_update_check, locked=bool(self._last_update_check.locked)
         )
+
+    def _on_update_banner_details(self) -> None:
+        """'Update' one-click-installs the pre-downloaded installer (C7);
+        otherwise it opens the details popup like 'What's New'."""
+        if self._update_ready_path and Path(self._update_ready_path).is_file():
+            self._run_downloaded_installer(self._update_ready_path)
+            return
+        self._on_update_banner_whats_new()
 
     def _on_update_banner_later(self) -> None:
         updater.record_snooze()

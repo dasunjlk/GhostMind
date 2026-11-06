@@ -7,6 +7,7 @@ banner instead of the popup, a locked check still forces the popup, and
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import List
 
@@ -95,6 +96,13 @@ class TestUpdateBannerWidget:
         banner.set_version("")
         assert banner._label.text() == "Update available"
 
+    def test_set_ready_flips_label_and_button(self, qapp):
+        banner = UpdateBanner()
+        banner.set_ready("1.2.0")
+        assert "1.2.0" in banner._label.text()
+        assert "ready to install" in banner._label.text()
+        assert banner._update_btn.text() == "Restart & install"
+
     def test_actions_emit_signals(self, qapp):
         banner = UpdateBanner()
         seen: List[str] = []
@@ -151,6 +159,13 @@ class TestOverlayIntegration:
         monkeypatch.setattr(overlay_window, "_global_cursor_pos", lambda: away)
         overlay._update_click_guard()
         assert overlay._click_guard_interactive is False
+
+    def test_show_update_banner_ready_mode(self, overlay, qapp):
+        overlay.show()
+        overlay.show_update_banner("1.2.0", ready=True)
+        assert overlay._update_banner.isVisible()
+        assert "ready to install" in overlay._update_banner._label.text()
+        assert overlay._update_banner._update_btn.text() == "Restart & install"
 
 
 class TestControllerBannerFlow:
@@ -213,3 +228,121 @@ class TestControllerBannerFlow:
         assert controller.overlay._update_banner.isVisible()
         controller._enter_update_lock(_grace_check(locked=True, days_left=0))
         assert not controller.overlay._update_banner.isVisible()
+
+
+class TestAutoDownload:
+    """C7: background download after notification, ready state, one-click install."""
+
+    def _spin(self, qapp, condition, timeout: float = 5.0) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            qapp.processEvents()
+            if condition():
+                return True
+            time.sleep(0.01)
+        return condition()
+
+    def test_auto_download_flips_banner_to_ready(self, controller, monkeypatch, tmp_path, qapp):
+        fake = tmp_path / "GhostMind-Setup-1.1.0.exe"
+        fake.write_bytes(b"MZfake")
+        monkeypatch.setattr(updater, "download_installer", lambda release, **kw: fake)
+        controller.overlay.show()
+
+        controller._on_update_check_done(_grace_check())
+
+        flipped = self._spin(
+            qapp,
+            lambda: controller.overlay._update_banner._update_btn.text().startswith("Restart"),
+        )
+        assert flipped, "banner must flip to ready after the background download"
+        assert controller._update_ready_path == str(fake)
+        assert "ready to install" in controller.overlay._update_banner._label.text()
+
+    def test_auto_download_failure_is_silent(self, controller, monkeypatch, qapp):
+        def _boom(release, **kw):
+            raise updater.UpdaterError("network down")
+
+        monkeypatch.setattr(updater, "download_installer", _boom)
+        controller.overlay.show()
+        controller._on_update_check_done(_grace_check())
+
+        settled = self._spin(qapp, lambda: controller._update_download_worker is None)
+        assert settled
+        assert controller._update_ready_path is None
+        assert controller.overlay._update_banner._update_btn.text() == "Update", (
+            "failed auto-download must leave the banner in the available state"
+        )
+
+    def test_ready_state_from_previous_session_needs_no_redownload(
+        self, controller, tmp_path
+    ):
+        fake = tmp_path / "GhostMind-Setup-1.1.0.exe"
+        fake.write_bytes(b"MZfake")
+        check = _grace_check(
+            state={
+                "downloaded_version": "1.1.0",
+                "downloaded_sha_ok": True,
+                "downloaded_path": str(fake),
+            }
+        )
+        controller.overlay.show()
+        controller._on_update_check_done(check)
+        assert controller._update_ready_path == str(fake)
+        assert controller.overlay._update_banner._update_btn.text() == "Restart & install"
+        assert controller._update_download_worker is None, (
+            "a verified download for this version must not be re-fetched"
+        )
+
+    def test_ready_state_ignores_missing_file(self, controller, tmp_path):
+        check = _grace_check(
+            state={
+                "downloaded_version": "1.1.0",
+                "downloaded_sha_ok": True,
+                "downloaded_path": str(tmp_path / "gone.exe"),
+            }
+        )
+        controller.overlay.show()
+        controller._on_update_check_done(check)
+        assert controller._update_ready_path is None
+        assert controller.overlay._update_banner._update_btn.text() == "Update"
+
+    def test_one_click_install_runs_installer_and_quits(
+        self, controller, monkeypatch, tmp_path
+    ):
+        fake = tmp_path / "GhostMind-Setup-1.1.0.exe"
+        fake.write_bytes(b"MZfake")
+        launched: List[str] = []
+        monkeypatch.setattr(
+            app_main.os, "startfile", lambda p: launched.append(str(p)), raising=False
+        )
+        pops: List[str] = []
+        monkeypatch.setattr(updater, "record_popup", lambda *a, **kw: pops.append("popup"))
+        quit_calls: List[bool] = []
+
+        class FakeApp:
+            def quit(self):
+                quit_calls.append(True)
+
+        fake_qapp = type(
+            "FakeQApplication",
+            (),
+            {"instance": staticmethod(lambda: FakeApp())},
+        )
+        monkeypatch.setattr(app_main, "QApplication", fake_qapp)
+
+        controller._update_ready_path = str(fake)
+        controller._on_update_banner_details()
+
+        assert launched == [str(fake)]
+        assert quit_calls == [True], "app must quit so Inno Setup can replace files"
+        assert pops == ["popup"]
+
+    def test_whats_new_opens_popup_even_when_ready(self, controller, tmp_path):
+        fake = tmp_path / "GhostMind-Setup-1.1.0.exe"
+        fake.write_bytes(b"MZfake")
+        controller._update_ready_path = str(fake)
+        controller._last_update_check = _grace_check()
+        controller.overlay._update_banner._whats_new_btn.click()
+        assert controller._update_popup is not None, (
+            "What's New must show the details popup, never launch the installer"
+        )

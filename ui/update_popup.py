@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from pathlib import Path
 from typing import Any, Optional
 
 from PyQt6.QtCore import QObject, Qt, QUrl, pyqtSignal
@@ -83,6 +84,32 @@ class UpdatePopup(QDialog):
             )
         self.setMinimumSize(460, 320)
         self._build_ui()
+        self._use_pre_downloaded_installer()
+
+    def _use_pre_downloaded_installer(self) -> None:
+        """C7: skip the download when this version is already fetched and
+        SHA-256 verified by the background auto-download — one click installs."""
+        try:
+            state = updater.load_state(self._state_path)
+        except Exception:
+            return
+        if str(state.get("downloaded_version") or "") != str(self._check.tag):
+            return
+        if not state.get("downloaded_sha_ok"):
+            return
+        path = Path(str(state.get("downloaded_path") or ""))
+        if not path.is_file():
+            return
+        self._installer_path = str(path)
+        self._status.setText(
+            "The update is already downloaded and verified — click below to install."
+        )
+        self._update_btn.setText("Restart installer")
+        try:
+            self._update_btn.clicked.disconnect(self._on_update_now)
+        except TypeError:
+            pass
+        self._update_btn.clicked.connect(self._run_installer)
 
     # ------------------------------------------------------------------ UI --
 

@@ -18,6 +18,7 @@ SETTINGS_FILENAME = "settings.toml"
 LOG_FILENAME = "ghostmind.log"
 UPDATE_STATE_FILENAME = "update_state.json"
 ANONYMOUS_ID_FILENAME = "anonymous_id.txt"
+UPDATES_DIRNAME = "updates"
 
 
 def is_frozen() -> bool:
@@ -69,6 +70,18 @@ def update_state_path() -> Path:
     if _flat_layout():
         return data_dir() / UPDATE_STATE_FILENAME
     return install_root() / "config" / UPDATE_STATE_FILENAME
+
+
+def updates_dir() -> Path:
+    """App-managed folder for auto-downloaded installers (C7).
+
+    Lives inside the app's own data area — never the user's Downloads or
+    Pictures folders — and survives reboots so a downloaded installer can
+    be installed on the next launch.
+    """
+    if _flat_layout():
+        return data_dir() / UPDATES_DIRNAME
+    return install_root() / "config" / UPDATES_DIRNAME
 
 
 def migrate_legacy_data(
