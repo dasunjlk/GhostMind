@@ -38,6 +38,7 @@ from PyQt6.QtWidgets import (
 from core.ai_engine import DEFAULT_BASE_URL, DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
+from core.screen_reader import configure_tesseract_path
 from ui.overlay_window import OverlayWindow
 from utils import app_paths, error_reporter, updater
 from utils.hotkey_manager import HotkeyManager
@@ -47,6 +48,10 @@ from version import __version__
 def check_dependencies() -> List[str]:
     """Check for required packages and return a list of warning messages."""
     warnings: List[str] = []
+
+    # Point pytesseract at the installer-bundled Tesseract first (C11) so
+    # the probe below passes on installed builds with no user-installed OCR.
+    configure_tesseract_path()
 
     # Tesseract binary (pytesseract may be installed but tesseract.exe missing)
     try:

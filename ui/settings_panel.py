@@ -261,6 +261,13 @@ class SettingsPanel(QWidget):
         about_lay.addWidget(app_title)
         about_lay.addWidget(app_desc)
         about_lay.addSpacing(4)
+        # C11: screen scanning ships inside the installer — acknowledge it.
+        bundled_ocr = QLabel(
+            "Bundled OCR: Tesseract (Apache License 2.0) — see TESSERACT-NOTICE.txt in the install folder."
+        )
+        bundled_ocr.setWordWrap(True)
+        bundled_ocr.setStyleSheet("color:#888888;font-size:11px;")
+        about_lay.addWidget(bundled_ocr)
         about_lay.addWidget(app_author)
         about_lay.addWidget(app_copy)
         about_lay.addSpacing(6)
