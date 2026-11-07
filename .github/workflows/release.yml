@@ -38,6 +38,30 @@ jobs:
       - name: Build app (PyInstaller onedir)
         run: pyinstaller --noconfirm --clean ghostmind.spec
 
+      - name: Stage bundled Tesseract OCR (C11)
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $tess = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path "$tess\tesseract.exe")) {
+            throw "Tesseract staging failed: tesseract.exe not found in $tess"
+          }
+          New-Item -ItemType Directory -Force -Path "dist\staging\tesseract\tessdata" | Out-Null
+          Copy-Item "$tess\tesseract.exe" "dist\staging\tesseract\"
+          Copy-Item "$tess\*.dll" "dist\staging\tesseract\"
+          # Ship the ~4 MB fast-integer English model instead of the ~23 MB default.
+          Invoke-WebRequest `
+            -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata" `
+            -OutFile "dist\staging\tesseract\tessdata\eng.traineddata"
+          if ((Get-Item "dist\staging\tesseract\tessdata\eng.traineddata").Length -lt 1MB) {
+            throw "eng.traineddata download looks wrong"
+          }
+          if (Test-Path "$tess\LICENSE") {
+            Copy-Item "$tess\LICENSE" "dist\staging\tesseract\"
+          }
+          $mb = [math]::Round(((Get-ChildItem -Recurse "dist\staging" | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "Staged tesseract tree: $mb MB"
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
@@ -53,6 +77,10 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}" -replace '^v', ''
+          # C11: portable builds carry the bundled OCR too.
+          if (Test-Path "dist\staging\tesseract") {
+            Copy-Item "dist\staging\tesseract" "dist\ghostmind\tesseract" -Recurse
+          }
           Compress-Archive -Path "dist\ghostmind\*" -DestinationPath "dist\GhostMind-Portable-$tag.zip"
 
       - name: Generate SHA256SUMS

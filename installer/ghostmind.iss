@@ -71,6 +71,17 @@ Source: "assets\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 ; .env.example (template for users)
 Source: ".env.example"; DestDir: "{app}"; Flags: ignoreversion
+; ---------------------------------------------------------------------
+; Bundled Tesseract OCR (C11) — the app resolves it from {app}\tesseract,
+; so screen scanning works with zero external installs. The tree is
+; staged by release.yml into dist\staging; local builds without staging
+; simply skip this block. Files live inside {app}, so uninstall removes
+; them with everything else.
+; ---------------------------------------------------------------------
+#if FileExists(AddBackslash(SetupSetting("SourceDir")) + "dist\staging\tesseract\tesseract.exe")
+Source: "dist\staging\tesseract\*"; DestDir: "{app}\tesseract"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "assets\installer\TESSERACT-NOTICE.txt"; DestDir: "{app}\tesseract"; Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\GhostMind"; Filename: "{app}\ghostmind.exe"
