@@ -36,6 +36,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=dist
 OutputBaseFilename=GhostMind-Setup-{#MyAppVersion}
 SetupIconFile=assets\icon.ico
+; Branded wizard (C10): dark side banner with the ghost + wordmark. The
+; classic image is used by every Inno 6 release; the 2x image sharpens it
+; on high-DPI/scaled wizards (Inno Setup 6.3+).
+WizardImageFile=assets\installer\wizard-side.bmp
+WizardResizeImageFile=assets\installer\wizard-side-2x.bmp
 ; Compression
 Compression=lzma2/ultra64
 ; Ask Windows to close a running GhostMind before replacing files.
@@ -47,6 +52,11 @@ UninstallDisplayIcon={app}\ghostmind.exe
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Messages]
+; C10: greet like a real product page (reference: sample-installer.png).
+WelcomeLabel1=Welcome to GhostMind
+WelcomeLabel2=GhostMind puts a stealth AI assistant on top of your screen: scan what you're reading, ask anything, and get instant answers. It installs just for you and doesn't need administrator rights.%n%nClick Next to continue, or Cancel to exit.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
