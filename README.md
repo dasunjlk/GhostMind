@@ -73,6 +73,11 @@ installer is **unsigned**, so Windows SmartScreen may show "Windows protected
 your PC" — choose *More info → Run anyway*. Optional checkboxes: desktop
 shortcut (on by default) and "Start with Windows".
 
+Install size: the installer bundles everything GhostMind needs — including
+Tesseract OCR — so there is nothing else to download or install. The dormant
+audio-transcription stack is not shipped while that feature is hidden, which
+keeps the package roughly half the size it would otherwise be.
+
 Uninstalling removes the app files but keeps `%LOCALAPPDATA%\GhostMind\data`
 (settings, update state, anonymous ID, logs), so reinstalling preserves your setup.
 

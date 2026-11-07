@@ -1,6 +1,7 @@
 """Tests for non-blocking startup dependency warnings."""
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from unittest import mock
 
@@ -103,3 +104,48 @@ class TestStartupWarnings:
         monkeypatch.delenv("GROQ_API_KEY", raising=False)
         warnings = app_main.check_dependencies()
         assert not any("API key" in warning for warning in warnings)
+
+
+class TestFrozenAwareAudioProbes:
+    """C12: frozen builds bundle the audio stack out — installed users must
+    never see a false "missing dependency" warning for it."""
+
+    @staticmethod
+    def _block_audio_imports(monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _fake_import(name, *args, **kwargs):
+            if name.startswith(("faster_whisper", "sounddevice")):
+                raise ImportError(f"simulated missing {name}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _fake_import)
+
+    @pytest.fixture(autouse=True)
+    def _fake_tesseract_probe(self, monkeypatch):
+        import pytesseract
+
+        monkeypatch.setattr(
+            pytesseract, "get_tesseract_version", lambda: "5.3.0.20240331"
+        )
+
+    def test_frozen_build_skips_audio_probes(self, monkeypatch):
+        self._block_audio_imports(monkeypatch)
+        monkeypatch.setattr(sys, "frozen", True, raising=False)
+
+        warnings = app_main.check_dependencies()
+
+        assert not any(
+            "faster-whisper" in w or "sounddevice" in w for w in warnings
+        ), "dormant audio deps are intentionally unbundled — never warn"
+
+    def test_source_run_still_reports_missing_audio(self, monkeypatch):
+        self._block_audio_imports(monkeypatch)
+        monkeypatch.setattr(sys, "frozen", False, raising=False)
+
+        warnings = app_main.check_dependencies()
+
+        assert any("faster-whisper" in w for w in warnings)
+        assert any("sounddevice" in w for w in warnings)
