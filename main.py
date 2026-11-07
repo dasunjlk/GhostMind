@@ -79,25 +79,29 @@ def check_dependencies() -> List[str]:
     # The Groq API key is optional at startup — new users paste one in
     # Settings -> API on first run. Never warn or block for it here.
 
-    # faster-whisper
-    try:
-        from faster_whisper import WhisperModel  # noqa: F401
-    except ImportError:
-        warnings.append(
-            "faster-whisper not installed.\n"
-            "  Audio transcription will not work.\n"
-            "  Install: pip install faster-whisper"
-        )
+    # faster-whisper — probed only in source runs. Frozen builds
+    # intentionally bundle it out while audio is dormant (C12); installed
+    # users must never see a "missing dependency" banner for it.
+    if not getattr(sys, "frozen", False):
+        try:
+            from faster_whisper import WhisperModel  # noqa: F401
+        except ImportError:
+            warnings.append(
+                "faster-whisper not installed.\n"
+                "  Audio transcription will not work.\n"
+                "  Install: pip install faster-whisper"
+            )
 
-    # sounddevice
-    try:
-        import sounddevice  # noqa: F401
-    except ImportError:
-        warnings.append(
-            "sounddevice not installed.\n"
-            "  Audio capture will not work.\n"
-            "  Install: pip install sounddevice"
-        )
+    # sounddevice — same frozen-aware rule as faster-whisper (C12).
+    if not getattr(sys, "frozen", False):
+        try:
+            import sounddevice  # noqa: F401
+        except ImportError:
+            warnings.append(
+                "sounddevice not installed.\n"
+                "  Audio capture will not work.\n"
+                "  Install: pip install sounddevice"
+            )
 
     # keyboard
     try:
