@@ -4,6 +4,7 @@
 
 | Version | Supported |
 | ------- | --------- |
+| 1.1.x   | Yes       |
 | 1.0.x   | Yes       |
 | < 1.0   | No        |
 
@@ -32,11 +33,14 @@ and build/release scripts in this repository.
 - Vulnerabilities in third-party dependencies — please report them upstream.
 - Social engineering, physical access, or issues that require an already
   compromised machine.
-- Exposed Groq API keys — revoke the key in the
-  [Groq console](https://console.groq.com) and rotate it.
+- Exposed provider API keys — revoke the key in the provider's dashboard
+  (e.g. the [Groq console](https://console.groq.com) or OpenRouter) and rotate it.
 
 ## Handling API keys safely
 
-GhostMind stores your key in Windows Credential Manager (with a local settings
-fallback). Never paste your key into issues, logs, screenshots, or pull
-requests.
+GhostMind stores API keys in Windows Credential Manager, **one slot per
+provider host** (e.g. `api.groq.com` and `openrouter.ai` each get their own
+slot), with a local plaintext fallback in the app data directory only when
+keyring is unavailable. Never paste your key into issues, logs, screenshots,
+or pull requests — the in-app Feedback tab scrubs key patterns
+(`gsk_…` / `sk-…`) before sending, but do not rely on that.
