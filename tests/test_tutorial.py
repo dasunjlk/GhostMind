@@ -18,7 +18,7 @@ import ui.overlay_window as overlay_window
 from tests.test_window_geometry import BASE_SETTINGS
 from ui.overlay_window import OverlayWindow
 
-STEP_COUNT = 18
+STEP_COUNT = 19
 
 
 @pytest.fixture(scope="session")
@@ -132,6 +132,15 @@ class TestNavigation:
         controller._back()
         assert controller.index == 2
 
+    def test_feedback_step_selects_feedback_tab(self, overlay, qapp):
+        overlay.maybe_start_first_run_tutorial()
+        controller = overlay._tutorial
+        _advance(controller, 13, qapp)  # step 14: the Feedback tab
+
+        assert controller._steps[controller.index].title == "Tell us what you think"
+        assert overlay.is_settings_open()
+        assert overlay._settings_panel._tabs.currentWidget() is overlay._settings_panel._feedback_tab
+
     def test_last_step_is_done_only(self, overlay, qapp):
         overlay.maybe_start_first_run_tutorial()
         controller = overlay._tutorial
@@ -170,14 +179,14 @@ class TestClickModes:
         monkeypatch.setattr(overlay, "trigger_screen_scan", lambda: scans.append(True))
         overlay.maybe_start_first_run_tutorial()
         controller = overlay._tutorial
-        _advance(controller, 14, qapp)  # step 15: the Scan button (home)
+        _advance(controller, 15, qapp)  # step 16: the Scan button (home)
 
         assert controller._steps[controller.index].click_mode == "block"
         QTest.mouseClick(overlay._btn_scan, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert scans == [], "tour must never trigger a real scan"
-        assert controller.index == 15, "blocked click still advances"
+        assert controller.index == 16, "blocked click still advances"
 
     def test_check_button_blocked_does_not_call_api(self, overlay, qapp, monkeypatch):
         panel = overlay._settings_panel

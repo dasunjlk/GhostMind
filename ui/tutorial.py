@@ -421,6 +421,10 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         overlay.open_settings()
         panel.focus_tab("prefs")
 
+    def feedback() -> None:
+        overlay.open_settings()
+        panel.focus_tab("feedback")
+
     def about() -> None:
         overlay.open_settings()
         panel.focus_tab("about")
@@ -522,6 +526,14 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
             "24 pt.",
             navigate=prefs,
             target=lambda: panel._font_size,
+        ),
+        TutorialStep(
+            "Tell us what you think",
+            "Loving it? Something broken? The Feedback tab sends it "
+            "straight to the developer — anonymous, privacy-safe, and it "
+            "genuinely shapes the next release.",
+            navigate=feedback,
+            target=lambda: panel._feedback_tab,
         ),
         TutorialStep(
             "About GhostMind",
