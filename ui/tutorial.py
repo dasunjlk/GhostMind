@@ -435,22 +435,21 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
     return [
         TutorialStep(
             "Welcome to GhostMind 👋",
-            "This quick tour shows you around — it takes under a minute. "
+            "This quick tour shows you around. it takes under a minute. "
             "Click the ⚙ gear to open Settings.",
             target=lambda: overlay._btn_set,
             click_mode="passthrough",
         ),
         TutorialStep(
             "Pick your screen",
-            "Which monitor should GhostMind scan? Most people leave this "
-            "on Monitor 1.",
+            "Which monitor should GhostMind scan?",
             navigate=general,
             target=lambda: panel._monitor,
         ),
         TutorialStep(
             "Scan mode",
             "Manual scans when you press ⚡ or Ctrl+Shift+S. Auto rescans "
-            "every few seconds — hands-free.",
+            "every few seconds, hands-free.",
             navigate=general,
             target=lambda: panel._scan_mode,
         ),
@@ -461,7 +460,7 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
             target=lambda: panel._opacity,
         ),
         TutorialStep(
-            "Click-through",
+            "Click through",
             "When ON, clicks pass through the overlay so it never blocks "
             "what is underneath. Ctrl+Shift+X turns it off anytime.",
             navigate=general,
@@ -477,13 +476,13 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Global hotkeys",
-            "Seven shortcuts work from anywhere in Windows — retype any "
+            "Seven shortcuts work from anywhere in Windows, retype any "
             "of them, then press Save.",
             navigate=shortcuts,
             target=lambda: panel._keys_tab,
         ),
         TutorialStep(
-            "Connect your AI — the important one",
+            "Put your Model provider",
             "Groq works out of the box with this Base URL. OpenRouter and "
             "other compatible providers just need a different address here.",
             navigate=api,
@@ -491,22 +490,22 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Paste your API key",
-            "Grab a free key at console.groq.com and paste it here. It "
+            "Grab an API key from your model provider and paste it here. It "
             "never leaves your device except to talk to the provider.",
             navigate=api,
             target=lambda: panel._api_key,
         ),
         TutorialStep(
             "Choose your model",
-            "The AI brain that answers you. Every provider names its "
-            "models differently — pick one from the list, or type any "
+            "Every provider have different set of models "
+            "models differently - pick one from the list, or type any "
             "model ID your provider supports.",
             navigate=api,
             target=lambda: panel._ai_model,
         ),
         TutorialStep(
             "Check Available Model",
-            "One click verifies your Base URL and key, then shows every "
+            "One click verifies your Base URL and API key, then shows every "
             "model this key can use.",
             navigate=api,
             target=lambda: panel._check_btn,
@@ -514,7 +513,7 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Your key stays safe",
-            "Save stores the key in Windows Credential Manager — never "
+            "Save stores the key in Windows Credential Manager - never "
             "in a plain file.",
             navigate=api,
             target=lambda: panel._save_btn,
@@ -522,7 +521,7 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Make it readable",
-            "Font size for answers, subtitles, and the whole app — 9 to "
+            "Font size for answers, subtitles, and the whole app - 9 to "
             "24 pt.",
             navigate=prefs,
             target=lambda: panel._font_size,
@@ -530,14 +529,14 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         TutorialStep(
             "Tell us what you think",
             "Loving it? Something broken? The Feedback tab sends it "
-            "straight to the developer — anonymous, privacy-safe, and it "
+            "straight to the developer - anonymous, privacy-safe, and it "
             "genuinely shapes the next release.",
             navigate=feedback,
             target=lambda: panel._feedback_tab,
         ),
         TutorialStep(
             "About GhostMind",
-            "Version info and the GitHub page — and Replay tutorial "
+            "Version info and the GitHub page - and Replay tutorial "
             "lives right here whenever you want this tour again.",
             navigate=about,
             target=lambda: panel._about_tab,
@@ -552,14 +551,14 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Pointer mode",
-            "This toggle lets clicks pass through the overlay — handy "
+            "This toggle lets clicks pass through the overlay - handy "
             "when you only want to look.",
             target=lambda: overlay._click_through_toggle,
             click_mode="block",
         ),
         TutorialStep(
             "Just ask",
-            "Type any question at the bottom and press Enter — no "
+            "Type any question at the bottom and press Enter - no "
             "scanning needed.",
             target=lambda: overlay._ask_input,
             click_mode="passthrough",
