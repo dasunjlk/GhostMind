@@ -18,7 +18,7 @@ import ui.overlay_window as overlay_window
 from tests.test_window_geometry import BASE_SETTINGS
 from ui.overlay_window import OverlayWindow
 
-STEP_COUNT = 16
+STEP_COUNT = 18
 
 
 @pytest.fixture(scope="session")
@@ -170,14 +170,14 @@ class TestClickModes:
         monkeypatch.setattr(overlay, "trigger_screen_scan", lambda: scans.append(True))
         overlay.maybe_start_first_run_tutorial()
         controller = overlay._tutorial
-        _advance(controller, 12, qapp)  # step 13: the Scan button (home)
+        _advance(controller, 14, qapp)  # step 15: the Scan button (home)
 
         assert controller._steps[controller.index].click_mode == "block"
         QTest.mouseClick(overlay._btn_scan, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert scans == [], "tour must never trigger a real scan"
-        assert controller.index == 13, "blocked click still advances"
+        assert controller.index == 15, "blocked click still advances"
 
     def test_check_button_blocked_does_not_call_api(self, overlay, qapp, monkeypatch):
         panel = overlay._settings_panel
@@ -185,14 +185,14 @@ class TestClickModes:
         monkeypatch.setattr(panel, "_on_check_models", lambda *a, **k: calls.append(True))
         overlay.maybe_start_first_run_tutorial()
         controller = overlay._tutorial
-        _advance(controller, 8, qapp)  # step 9: Check & load models
+        _advance(controller, 10, qapp)  # step 11: Check Available Model
 
         assert controller._steps[controller.index].click_mode == "block"
         QTest.mouseClick(panel._check_btn, Qt.MouseButton.LeftButton)
         qapp.processEvents()
 
         assert calls == [], "tour must never trigger an API check"
-        assert controller.index == 9
+        assert controller.index == 11
 
 
 class TestReplay:

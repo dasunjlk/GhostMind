@@ -480,16 +480,30 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
         ),
         TutorialStep(
             "Connect your AI — the important one",
-            "Paste your API key from console.groq.com (free). Groq works "
-            "out of the box; OpenRouter and other compatible providers "
-            "just need a different Base URL.",
+            "Groq works out of the box with this Base URL. OpenRouter and "
+            "other compatible providers just need a different address here.",
             navigate=api,
             target=lambda: panel._api_base_url,
         ),
         TutorialStep(
-            "Check & load models",
-            "One click verifies your key and fills the dropdown with "
-            "every model you can use — pick the one you want.",
+            "Paste your API key",
+            "Grab a free key at console.groq.com and paste it here. It "
+            "never leaves your device except to talk to the provider.",
+            navigate=api,
+            target=lambda: panel._api_key,
+        ),
+        TutorialStep(
+            "Choose your model",
+            "The AI brain that answers you. Every provider names its "
+            "models differently — pick one from the list, or type any "
+            "model ID your provider supports.",
+            navigate=api,
+            target=lambda: panel._ai_model,
+        ),
+        TutorialStep(
+            "Check Available Model",
+            "One click verifies your Base URL and key, then shows every "
+            "model this key can use.",
             navigate=api,
             target=lambda: panel._check_btn,
             click_mode="block",
@@ -499,7 +513,8 @@ def build_steps(overlay: QWidget, panel) -> List[TutorialStep]:
             "Save stores the key in Windows Credential Manager — never "
             "in a plain file.",
             navigate=api,
-            target=lambda: panel._key_status,
+            target=lambda: panel._save_btn,
+            click_mode="block",
         ),
         TutorialStep(
             "Make it readable",

@@ -218,7 +218,7 @@ class SettingsPanel(QWidget):
         )
         self._clear_key_btn.clicked.connect(self._on_clear_key)
 
-        self._check_btn = QPushButton("Check & load models")
+        self._check_btn = QPushButton("Check Available Model")
         self._check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self._check_btn.setStyleSheet(
             "QPushButton{background:#162B1E;color:#00FF88;border:1px solid #00FF88;padding:6px 12px;border-radius:4px;}"
