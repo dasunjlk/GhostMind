@@ -138,9 +138,9 @@ class TestSettingsPanelTabs:
             },
         }
         panel = SettingsPanel(initial)
-        assert panel._tabs.count() == 6
+        assert panel._tabs.count() == 7
         tab_names = [panel._tabs.tabText(i) for i in range(panel._tabs.count())]
-        assert tab_names == ["General", "Audio", "Shortcuts", "API", "Preferences", "About"]
+        assert tab_names == ["General", "Audio", "Shortcuts", "API", "Preferences", "Feedback", "About"]
         # v1.0: the Audio tab is hidden (future-plan.md checklist)
         assert not panel._tabs.isTabVisible(1)
 

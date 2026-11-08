@@ -258,6 +258,22 @@ def _resolve_dsn() -> str:
     return os.environ.get(ENV_DSN, "").strip() or SENTRY_DSN.strip()
 
 
+def feedback_channel_state() -> Tuple[bool, str]:
+    """Whether the in-app feedback channel can send right now (C13).
+
+    Returns (active, reason). Active only when reporting is enabled AND a
+    DSN is configured. The reason is user-facing ("GHOSTMIND_NO_TELEMETRY=1",
+    "running under pytest", "no Sentry DSN configured") — the feedback UI
+    shows it so the opt-out is honest, never a silent fake-send.
+    """
+    disabled, reason = _reporting_disabled()
+    if disabled:
+        return False, reason
+    if not _resolve_dsn():
+        return False, "no Sentry DSN configured"
+    return True, ""
+
+
 def _environment() -> str:
     return "production" if getattr(sys, "frozen", False) else "development"
 
