@@ -130,6 +130,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # UI text size (Preferences tab; 9-24 pt)
     "font_size": 13,
     "click_through": False,
+    # C14: guided tour. Absent/False = first run → auto-starts (non-skippable);
+    # completing it flips this to True; About → Replay tutorial re-runs it.
+    "tutorial_done": False,
     "dwm_cloak": False,
     # v1.0: listening features hidden (future-plan.md hidden-features checklist)
     "subtitles_enabled": False,
@@ -445,6 +448,7 @@ class GhostMindController(QObject):
             self._open_tesseract_download
         )
         self.overlay.settings_closed.connect(self._refresh_api_key_cta)
+        self.overlay.tutorial_finished.connect(self._on_tutorial_finished)
         self.overlay.update_whats_new_requested.connect(
             self._on_update_banner_whats_new
         )
@@ -752,6 +756,16 @@ class GhostMindController(QObject):
         worker.finished.connect(lambda: setattr(self, "_outbox_worker", None))
         worker.start()
 
+    # --- tutorial (C14) -------------------------------------------------------
+
+    def _on_tutorial_finished(self, completed: bool) -> None:
+        """Persist first-run tour completion (lightweight — no full apply)."""
+        if not completed:
+            return
+        self.settings["tutorial_done"] = True
+        save_settings(self.settings)
+        logger.info("First-run tutorial completed")
+
     # --- updates (U-01) -----------------------------------------------------
 
     def initial_update_check(self) -> None:
@@ -1017,6 +1031,8 @@ def main() -> int:
         )
     except Exception as e:
         logger.warning("Initial stealth apply failed: %s", e)
+    # C14: first-run guided tour (non-skippable, per the implementation plan).
+    QTimer.singleShot(800, ctrl.overlay.maybe_start_first_run_tutorial)
 
     return int(app.exec())
 

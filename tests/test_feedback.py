@@ -239,7 +239,8 @@ class TestFeedbackPanel:
         assert len(calls) == 1
         assert calls[0]["text"] == "Great app!"
         assert calls[0]["type"] == "works_great"
-        assert "✓ Sent — thank you!" in panel._status.text()
+        assert "✓ Sent" in panel._status.text()
+        assert "thank you!" in panel._status.text()
         assert panel._text.toPlainText() == "", "fields reset after success"
 
     def test_send_failure_shows_saved_note(self, qapp, monkeypatch):

@@ -234,7 +234,7 @@ class FeedbackPanel(QWidget):
             self._contact.clear()
             for btn in self._rating_buttons:
                 btn.setChecked(False)
-            self._status.setText("✓ Sent — thank you!")
+            self._status.setText("✓ Sent - thank you!")
             self._status.setStyleSheet("color:#00FF88;font-size:11px;")
         else:
             self._status.setText(f"● {msg}")
