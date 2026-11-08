@@ -40,7 +40,7 @@ from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
 from core.screen_reader import configure_tesseract_path
 from ui.overlay_window import OverlayWindow
-from utils import app_paths, error_reporter, updater
+from utils import app_paths, error_reporter, feedback, updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
 
@@ -311,6 +311,23 @@ class _UpdateDownloadWorker(QThread):
             self.result.emit(False, f"Download failed: {e}")
 
 
+class _OutboxFlushWorker(QThread):
+    """Silently resends feedback that failed to send last session (C13)."""
+
+    done = pyqtSignal(int)  # count sent
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+
+    def run(self) -> None:
+        try:
+            sent = feedback.flush_outbox(DATA_DIR)
+        except Exception as e:
+            logger.warning("Feedback outbox flush failed: %s", e)
+            sent = 0
+        self.done.emit(sent)
+
+
 class GhostMindController(QObject):
     """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
@@ -344,6 +361,9 @@ class GhostMindController(QObject):
         # C7: background auto-download of the notified version.
         self._update_download_worker: Optional[_UpdateDownloadWorker] = None
         self._update_ready_path: Optional[str] = None
+        # C13: flush unsent feedback shortly after launch (silent, best-effort).
+        self._outbox_worker: Optional[_OutboxFlushWorker] = None
+        QTimer.singleShot(6000, self._flush_feedback_outbox)
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
         self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
@@ -368,6 +388,13 @@ class GhostMindController(QObject):
         settings_action = QAction("Settings…", self)
         settings_action.triggered.connect(self._tray_open_settings)
         tray_menu.addAction(settings_action)
+
+        feedback_action = QAction("Send feedback…", self)
+        feedback_action.setToolTip(
+            "Praise, bugs, or ideas — anonymous and privacy-safe (C13)."
+        )
+        feedback_action.triggered.connect(self._tray_open_feedback)
+        tray_menu.addAction(feedback_action)
 
         self._click_through_action = QAction("Click-through: off", self)
         self._click_through_action.setCheckable(True)
@@ -559,6 +586,13 @@ class GhostMindController(QObject):
         self._tray_show()
         self.overlay.open_settings()
 
+    def _tray_open_feedback(self) -> None:
+        """Tray path to the Feedback tab (C13)."""
+        if self._update_locked:
+            return
+        self._tray_show()
+        self.overlay.open_feedback_settings()
+
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             if self._update_locked:
@@ -704,6 +738,19 @@ class GhostMindController(QObject):
         st = str(self.settings.get("session_type", "meeting"))
         context_type = "meeting_question" if "?" in text else ("meeting_audio" if st == "meeting" else "lecture_notes")
         self.overlay.request_ai_answer(text, context_type)
+
+    # --- feedback (C13) -------------------------------------------------------
+
+    def _flush_feedback_outbox(self) -> None:
+        """Resend feedback that failed last session (never blocks, never nags)."""
+        if self._outbox_worker is not None and self._outbox_worker.isRunning():
+            return
+        worker = _OutboxFlushWorker(self)
+        self._outbox_worker = worker
+        worker.done.connect(lambda _count: None)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda: setattr(self, "_outbox_worker", None))
+        worker.start()
 
     # --- updates (U-01) -----------------------------------------------------
 

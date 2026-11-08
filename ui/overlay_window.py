@@ -780,7 +780,7 @@ class OverlayWindow(QMainWindow):
     def set_api_key_missing(self, missing: bool) -> None:
         self._answer_panel.set_api_key_missing(missing)
 
-    def open_settings(self, focus_api: bool = False) -> None:
+    def open_settings(self, focus_api: bool = False, focus_feedback: bool = False) -> None:
         """Show the Settings page without toggling it closed."""
         if self._click_through_enabled():
             self.set_click_through(False)
@@ -793,8 +793,14 @@ class OverlayWindow(QMainWindow):
             self._settings_panel.show()
         if focus_api:
             self._settings_panel.focus_api_tab()
+        if focus_feedback:
+            self._settings_panel.focus_feedback_tab()
         self.raise_()
         self.activateWindow()
+
+    def open_feedback_settings(self) -> None:
+        """Open Settings on the Feedback tab (tray 'Send feedback…', C13)."""
+        self.open_settings(focus_feedback=True)
 
     def _open_api_settings(self) -> None:
         self.open_settings(focus_api=True)

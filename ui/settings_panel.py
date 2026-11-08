@@ -36,6 +36,7 @@ from core.ai_engine import (
 )
 from core.audio_listener import get_input_devices
 from core.screen_reader import get_monitors
+from ui.feedback_panel import FeedbackPanel
 from utils import key_store
 from version import (
     __app_name__,
@@ -231,7 +232,11 @@ class SettingsPanel(QWidget):
         form_api.addRow("", self._check_btn)
         self._api_tab = tab_api
 
-        # 5. About Tab
+        # 5. Feedback Tab (C13) — visible: praise, bugs, and ideas go to the
+        # same privacy-safe channel as error reports.
+        self._feedback_tab = FeedbackPanel()
+
+        # 6. About Tab
         tab_about = QWidget()
         about_lay = QVBoxLayout(tab_about)
         about_lay.setContentsMargins(12, 14, 12, 14)
@@ -297,6 +302,7 @@ class SettingsPanel(QWidget):
         self._tabs.addTab(tab_keys, "Shortcuts")
         self._tabs.addTab(tab_api, "API")
         self._tabs.addTab(tab_prefs, "Preferences")
+        self._tabs.addTab(self._feedback_tab, "Feedback")
         self._tabs.addTab(tab_about, "About")
 
         # v1.0: the Audio tab (capture / Whisper / session mode) is hidden for the
@@ -392,6 +398,10 @@ class SettingsPanel(QWidget):
         """Open the API tab and focus the key field (first-run CTA / tray)."""
         self._tabs.setCurrentWidget(self._api_tab)
         self._api_key.setFocus()
+
+    def focus_feedback_tab(self) -> None:
+        """Open the Feedback tab (tray 'Send feedback…')."""
+        self._tabs.setCurrentWidget(self._feedback_tab)
 
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)
