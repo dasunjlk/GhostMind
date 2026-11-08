@@ -57,6 +57,7 @@ class SettingsPanel(QWidget):
     saved = pyqtSignal(dict)
     opacity_preview = pyqtSignal(float)
     close_requested = pyqtSignal()
+    replay_tutorial_requested = pyqtSignal()
 
     def __init__(self, initial: Dict[str, Any], parent=None) -> None:
         super().__init__(parent)
@@ -84,6 +85,7 @@ class SettingsPanel(QWidget):
 
         # 1. General Tab
         tab_general = QWidget()
+        self._general_tab = tab_general
         form_gen = QFormLayout(tab_general)
         form_gen.setContentsMargins(10, 12, 10, 12)
         form_gen.setSpacing(10)
@@ -125,6 +127,7 @@ class SettingsPanel(QWidget):
 
         # 2. Audio Tab
         tab_audio = QWidget()
+        self._audio_tab = tab_audio
         form_aud = QFormLayout(tab_audio)
         form_aud.setContentsMargins(10, 12, 10, 12)
         form_aud.setSpacing(10)
@@ -153,6 +156,7 @@ class SettingsPanel(QWidget):
 
         # 3. Shortcuts Tab
         tab_keys = QWidget()
+        self._keys_tab = tab_keys
         form_keys = QFormLayout(tab_keys)
         form_keys.setContentsMargins(10, 12, 10, 12)
         form_keys.setSpacing(8)
@@ -238,6 +242,7 @@ class SettingsPanel(QWidget):
 
         # 6. About Tab
         tab_about = QWidget()
+        self._about_tab = tab_about
         about_lay = QVBoxLayout(tab_about)
         about_lay.setContentsMargins(12, 14, 12, 14)
         about_lay.setSpacing(8)
@@ -263,6 +268,16 @@ class SettingsPanel(QWidget):
         )
         link_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(__github__)))
 
+        # C14: replay the guided tour on demand (first run auto-starts).
+        replay_btn = QPushButton("▶  Replay tutorial")
+        replay_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        replay_btn.setStyleSheet(
+            "QPushButton{background:#1A1A1A;color:#00FF88;border:1px solid #333333;"
+            "padding:7px 12px;border-radius:4px;text-align:left;font-size:11.5px;}"
+            "QPushButton:hover{background:#222222;border-color:#00FF88;}"
+        )
+        replay_btn.clicked.connect(lambda: self.replay_tutorial_requested.emit())
+
         about_lay.addWidget(app_title)
         about_lay.addWidget(app_desc)
         about_lay.addSpacing(4)
@@ -277,10 +292,12 @@ class SettingsPanel(QWidget):
         about_lay.addWidget(app_copy)
         about_lay.addSpacing(6)
         about_lay.addWidget(link_btn)
+        about_lay.addWidget(replay_btn)
         about_lay.addStretch(1)
 
         # 6. Preferences Tab (appearance & future personalization options)
         tab_prefs = QWidget()
+        self._prefs_tab = tab_prefs
         form_prefs = QFormLayout(tab_prefs)
         form_prefs.setContentsMargins(10, 12, 10, 12)
         form_prefs.setSpacing(8)
@@ -402,6 +419,24 @@ class SettingsPanel(QWidget):
     def focus_feedback_tab(self) -> None:
         """Open the Feedback tab (tray 'Send feedback…')."""
         self._tabs.setCurrentWidget(self._feedback_tab)
+
+    def focus_tab(self, key: str) -> None:
+        """Raise a tab by key (C14 tour): general|audio|keys|api|prefs|feedback|about.
+
+        Unknown keys and hidden tabs (Audio in v1.0) are ignored safely —
+        the tour only ever requests visible tabs.
+        """
+        widget = {
+            "general": self._general_tab,
+            "audio": self._audio_tab,
+            "keys": self._keys_tab,
+            "api": self._api_tab,
+            "prefs": self._prefs_tab,
+            "feedback": self._feedback_tab,
+            "about": self._about_tab,
+        }.get(key)
+        if widget is not None:
+            self._tabs.setCurrentWidget(widget)
 
     def apply_data(self, data: Dict[str, Any]) -> None:
         self._data = dict(data)

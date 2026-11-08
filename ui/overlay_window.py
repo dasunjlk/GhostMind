@@ -64,6 +64,7 @@ from ui.click_through_banner import ClickThroughBanner
 from ui.dependency_banner import DependencyBanner
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
+from ui.tutorial import TutorialController, build_steps
 from ui.update_banner import UpdateBanner
 
 
@@ -308,6 +309,7 @@ class OverlayWindow(QMainWindow):
     summarize_meeting_requested = pyqtSignal()
     install_tesseract_requested = pyqtSignal()
     settings_closed = pyqtSignal()
+    tutorial_finished = pyqtSignal(bool)
     update_whats_new_requested = pyqtSignal()
     update_now_requested = pyqtSignal()
     update_later_requested = pyqtSignal()
@@ -328,6 +330,7 @@ class OverlayWindow(QMainWindow):
         self._visible_target = True
         self.close_event_allowed = True
         self._update_banner_active = False
+        self._tutorial: Optional[TutorialController] = None
         self._opacity_anim: Optional[QVariantAnimation] = None
         self._restoring_geometry = False
         self._geometry_save_timer = QTimer(self)
@@ -431,6 +434,7 @@ class OverlayWindow(QMainWindow):
             "QPushButton:hover { background: #222222; color: #00FF88; }"
         )
         btn_set.clicked.connect(self._toggle_settings)
+        self._btn_set = btn_set  # C14 tour target (first tour step)
 
         # Quick capture toggles (Zoom-style): click to enable/disable mic / system
         # audio. Kept in sync with the Audio tab via settings_changed/apply_settings.
@@ -567,6 +571,9 @@ class OverlayWindow(QMainWindow):
         self._settings_panel.saved.connect(self._on_settings_saved)
         self._settings_panel.close_requested.connect(self._close_settings)
         self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
+        self._settings_panel.replay_tutorial_requested.connect(
+            lambda: self.start_tutorial(replay=True)
+        )
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
         self._subtitle_bar.summarize_requested.connect(self.summarize_meeting_requested.emit)
@@ -801,6 +808,34 @@ class OverlayWindow(QMainWindow):
     def open_feedback_settings(self) -> None:
         """Open Settings on the Feedback tab (tray 'Send feedback…', C13)."""
         self.open_settings(focus_feedback=True)
+
+    def show_main_page(self) -> None:
+        """Return to the main (home) page if Settings is open (C14 tour)."""
+        if self._stack.currentIndex() == 1:
+            self._close_settings()
+
+    # ------------------------------------------------------ tutorial (C14) --
+
+    def maybe_start_first_run_tutorial(self) -> None:
+        """Auto-start the tour for first-time users (never for completed ones)."""
+        if bool(self._settings.get("tutorial_done", False)):
+            return
+        self.start_tutorial(replay=False)
+
+    def start_tutorial(self, replay: bool) -> None:
+        """Run the guided tour. First run is non-skippable; replays can skip."""
+        if self._tutorial is not None and self._tutorial.active:
+            return
+        controller = TutorialController(
+            self, build_steps(self, self._settings_panel), replay, self
+        )
+        controller.finished.connect(self._on_tutorial_finished)
+        self._tutorial = controller
+        controller.start()
+
+    def _on_tutorial_finished(self, completed: bool) -> None:
+        self._tutorial = None
+        self.tutorial_finished.emit(completed)
 
     def _open_api_settings(self) -> None:
         self.open_settings(focus_api=True)
@@ -1058,16 +1093,22 @@ class OverlayWindow(QMainWindow):
     def showEvent(self, e) -> None:
         super().showEvent(e)
         QTimer.singleShot(50, self._reapply_stealth)
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def moveEvent(self, e) -> None:
         super().moveEvent(e)
         self._reapply_stealth()
         self._schedule_geometry_save()
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._reapply_stealth()
         self._schedule_geometry_save()
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def hideEvent(self, e) -> None:
         super().hideEvent(e)
@@ -1224,6 +1265,10 @@ class OverlayWindow(QMainWindow):
         """Handle keyboard navigation within the overlay."""
         key = e.key()
         if key == Qt.Key.Key_Escape:
+            if self._tutorial is not None:
+                # C14: first-run tour consumes Esc (inert); replay tours skip.
+                self._tutorial.handle_escape()
+                return
             if self._stack.currentIndex() == 1:
                 self._toggle_settings()
             else:
