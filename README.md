@@ -298,6 +298,12 @@ assistance during your own calls or content). **Bypassing exam proctoring,
 workplace policy, or consent rules is misuse.** You are responsible for
 compliance with laws, contracts, and platform terms.
 
+## Community
+
+Bug reports, feedback, and contributions are welcome — please keep
+discussions respectful. Contributors agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
 ## License
 
 See [LICENSE](LICENSE) in the repository. GhostMind is MIT-licensed; the
