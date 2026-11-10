@@ -28,27 +28,32 @@ GhostMind is a **stealth AI assistant** for Windows. It lives on your screen as 
 - 🧭 **Zero learning curve** - a guided tour walks you through every setting on first run, replayable anytime
 - ⚡ **Stays out of your way** - global hotkeys, click-through mode, per-monitor capture, streamed answers sized to your window
 
-## Requirements
+## Features
 
-**To use GhostMind (end users):**
+- 📖 **Screen scan** - reads any monitor, filters out page noise (cookie banners, navigation, URLs), and answers the actual question
+- ⌨️ **Ask box** - type anything, no scanning needed, with streamed markdown answers
+- 🔌 **Any OpenAI-compatible provider** - Base URL + API key is all it takes; verify your credentials and see the models your key can use
+- 💬 **Session memory** - follow-up questions remember the conversation within one app run; wiped completely on close
+- 🔁 **Rapid-fire friendly** - questions queue up and are answered one by one, never lost
+- 🎲 **Deterministic answers** - the same question gives the same answer
+- 🖱 **Click-through mode** - let clicks pass through the overlay whenever you only want to look
+- ⌨️ **Remappable global hotkeys** - every action, from anywhere in Windows
+- 🖥 **Per-monitor capture** - choose which screen to scan
+- 📏 **Adaptive text** - font size 9-24 pt applied across the whole app
+- 📣 **In-app feedback** - tell the developer what you think, anonymously
+- 🚀 **Effortless updates** - a banner tells you when a new version exists, it downloads itself, one click installs
+- 🧭 **Guided tour** - learn the whole app in under a minute on first run
 
-- Windows 10 or 11 (64-bit)
-- An API key from any OpenAI-compatible AI provider (free tiers are available)
-- An internet connection for AI answers
-- About 250 MB of free disk space
-- Nothing else — the OCR engine ships inside the installer
+## Usage
 
-**To run from source (developers):** Python 3.11+, Git, and Tesseract OCR on
-`PATH` (source runs don't bundle it — Chocolatey: `choco install tesseract`).
-
-## Getting started
+### Getting started
 
 1. Download `GhostMind-Setup-<version>.exe` from the
-   [Releases page](https://github.com/dasunjlk/GhostMind/releases) and run it —
+   [Releases page](https://github.com/dasunjlk/GhostMind/releases) and run it -
    per-user install, no admin rights needed. (The installer is unsigned, so
    SmartScreen may show a warning - choose *More info → Run anyway*.)
 2. The in-app **guided tour** walks you through every setting on first
-   launch — including connecting your provider — so no setup knowledge is
+   launch - including connecting your provider - so no setup knowledge is
    needed. Replay it anytime from **Settings → About**.
 3. Open **Settings → API**, paste the API key from your provider, press
    **Check Available Model**, pick a model, **Save**. Done.
@@ -57,16 +62,98 @@ Everything ships inside the installer, so there is nothing else to download
 or install. Uninstalling keeps your settings and keys
 (`%LOCALAPPDATA%\GhostMind\data`), so reinstalling preserves your setup.
 
-## Developer setup
+| | |
+|---|---|
+| **Requirements**: Windows 10/11 (64-bit) · an API key from any OpenAI-compatible provider · internet for AI answers · ~250 MB disk space. **Nothing else** - the OCR engine ships inside the installer. | |
+
+### Guided tour
+
+The first launch starts a **step-by-step tour** with a spotlight: each banner
+highlights one control, and only that control is clickable while the rest of
+the app dims. It covers the home screen, every settings tab (the API tab gets
+the deepest coverage), and the home-screen features - finishing with a
+**Done** button on the last step. The first run cannot be skipped, so nobody
+accidentally misses it - and it is replayed anytime from
+**Settings → About → Replay tutorial**.
+
+| | |
+|---|---|
+| **Availability**: the tour starts automatically on first launch and can be replayed from Settings → About at any time. | <img src="assets/docs/screenshots/tutorial.png" width="300"> |
+
+### Choose your AI provider
+
+GhostMind speaks the OpenAI-compatible API, so most AI services work by
+entering three things in **Settings → API**:
+
+1. **Base URL** - your provider's API address
+2. **API key** - stored securely in Windows Credential Manager, one slot per provider
+3. **Check Available Model** - verifies your credentials and lists the models your key can use; pick one or type any model ID
+
+| Provider | Base URL | Notes |
+|---|---|---|
+| **Preconfigured default** | already set - just add your key | ships ready to use |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | hundreds of models behind one key |
+| **Local servers** (LM Studio, Ollama, …) | `http://localhost:<port>/v1` | fully offline, your hardware |
+| **Any OpenAI-compatible service** | from the provider's docs | most services need the `/v1` path |
+
+If something is wrong, GhostMind tells you **exactly** what: key rejected,
+unreachable host, out of credit, or an unknown model - never a generic error.
+
+### Asking GhostMind
+
+| | |
+|---|---|
+| ⚡ **Scan** (or `Ctrl+Shift+S`): reads the screen, isolates the actual question from page noise, and answers it.<br><br>**Ask box** (or `Ctrl+Shift+Q`): type any question and press Enter - no scanning needed.<br><br>Questions **queue up**: ask several in a row and each gets its own answer, in order.<br><br>**Session memory**: follow-ups remember what you already asked. **Clear** (`Ctrl+Shift+C`) wipes the answers and the memory; closing the app wipes everything. | <img src="assets/docs/screenshots/overlay-home.jpg" width="300"> |
+
+Global hotkeys (all remappable in **Settings → Shortcuts**):
+
+| Action | Default hotkey |
+|--------|----------------|
+| Toggle overlay visibility | `Ctrl+Shift+G` |
+| Trigger screen scan | `Ctrl+Shift+S` |
+| Clear answers | `Ctrl+Shift+C` |
+| Toggle click-through mode | `Ctrl+Shift+X` |
+| Focus the question input box | `Ctrl+Shift+Q` |
+
+Click-through mode lets mouse clicks pass through the overlay entirely - a
+banner and the tray menu always remain to switch it back off.
+
+### Feedback
+
+| | |
+|---|---|
+| **Settings → Feedback** (or tray → **Send feedback…**): pick what it is, rate the app, add details, and send.<br><br>It is anonymous and scrubbed with the same rules as error reports - with an optional email only if you want a reply.<br><br>If anonymous reporting is disabled, the tab hands you copy-ready text for a GitHub issue instead. | <img src="assets/docs/screenshots/feedback.png" width="300"> |
+
+### Updates
+
+| | |
+|---|---|
+| A small **banner** appears inside the app when a new version exists - *What's New* shows plain-language bullets, never markdown soup.<br><br>Once you have been notified, the new installer **downloads itself in the background** into the app's own data folder, SHA-256 verified - then the banner becomes **Restart & install**: one click.<br><br>A 5-day grace period with snoozes keeps you in control; a machine that is fully offline is never locked out. | <img src="assets/docs/screenshots/update-ready.png" width="300"><br><img src="assets/docs/screenshots/whatsnew.png" width="300"> |
+
+QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL`, `GHOSTMIND_FORCE_UPDATE=1`,
+`GHOSTMIND_GRACE_DAYS=0`, `GHOSTMIND_TESSERACT_DIR`.
+
+### Settings at a glance
+
+- **General**: monitor selection, scan mode (manual/auto) + interval, opacity, click-through
+- **Shortcuts**: all hotkeys, remappable
+- **API**: Base URL, API key, model selection, credential check
+- **Preferences**: font size (9-24 pt), applied everywhere including rendered answers
+- **Feedback**: talk to the developer
+- **About**: version, GitHub link, Replay tutorial
+- Bottom row: **Save** applies everything; Import/Export move your setup between machines
+
+## Developer guide
 
 **Requirements:** Python 3.11+, Git, and Tesseract OCR on `PATH` (see
-Requirements above).
+[Requirements](#getting-started); source runs don't bundle it - Chocolatey:
+`choco install tesseract`).
 
 1. Clone and enter the repository.
 2. Create and activate a virtual environment.
 3. Install the dependencies: `pip install -r requirements.txt`.
 4. Run the app: `python main.py`. Anything missing shows a non-blocking
-   banner — the app still starts with reduced functionality.
+   banner - the app still starts with reduced functionality.
 
 Full commands:
 
@@ -90,97 +177,7 @@ pytest -q
 Optional fonts: place **JetBrains Mono**, **Inter**, or **DM Sans** under
 `assets/fonts/`. Without them the UI falls back to **Segoe UI** / **Consolas**.
 
-## Asking GhostMind
-
-- ⚡ **Scan** (or `Ctrl+Shift+S`): reads the screen, isolates the actual
-  question from page noise - cookie banners, navigation, URLs - and answers it.
-- **Ask box** (or `Ctrl+Shift+Q`): type any question and press Enter.
-- Questions **queue up**: ask several in a row and each gets its own answer,
-  in order - none are lost while one is still streaming.
-- **Session memory**: follow-ups remember what you already asked and answered.
-  **Clear** (or `Ctrl+Shift+C`) wipes the visible answers and the memory;
-  closing the app wipes everything - nothing is ever saved to disk.
-
-| <img src="assets/docs/screenshots/overlay-home.png" width="330"> |
-|---|
-| *Streamed answers, sized to your window, with copy per block* |
-
-Global hotkeys (all remappable in **Settings → Shortcuts**):
-
-| Action | Default hotkey |
-|--------|----------------|
-| Toggle overlay visibility | `Ctrl+Shift+G` |
-| Trigger screen scan | `Ctrl+Shift+S` |
-| Clear answers | `Ctrl+Shift+C` |
-| Toggle click-through mode | `Ctrl+Shift+X` |
-| Focus the question input box | `Ctrl+Shift+Q` |
-
-Click-through mode lets mouse clicks pass through the overlay entirely — a
-banner and the tray menu always remain to switch it back off.
-
-## Choose your AI provider
-
-GhostMind speaks the OpenAI-compatible API, so most AI services work by
-entering three things in **Settings → API**:
-
-1. **Base URL** - your provider's API address
-2. **API key** - stored securely in Windows Credential Manager, one slot per provider
-3. **Check Available Model** - verifies your credentials and lists the models your key can use; pick one or type any model ID
-
-| Provider | Base URL | Notes |
-|---|---|---|
-| **Preconfigured default** | already set - just add your key | ships ready to use |
-| **OpenRouter** | `https://openrouter.ai/api/v1` | hundreds of models behind one key |
-| **Local servers** (LM Studio, Ollama, …) | `http://localhost:<port>/v1` | fully offline, your hardware |
-| **Any OpenAI-compatible service** | from the provider's docs | most services need the `/v1` path |
-
-If something is wrong, GhostMind tells you **exactly** what: key rejected,
-unreachable host, out of credit, or an unknown model - never a generic error.
-
-## Feedback
-
-**Settings → Feedback** (or tray → **Send feedback…**): pick what it is, rate
-the app, add details, and send. It is anonymous and scrubbed with the same
-rules as error reports - with an optional email only if you want a reply. If
-anonymous reporting is disabled, the tab hands you copy-ready text for a
-GitHub issue instead.
-
-| <img src="assets/docs/screenshots/feedback.png" width="330"> |
-|---|
-| *Every report helps shape the next release* |
-
-## Updates
-
-- A small **banner** appears inside the app when a new version exists -
-  *What's New* shows plain-language bullets, never markdown soup.
-- Once you have been notified, the new installer **downloads itself in the
-  background** into the app's own data folder, SHA-256 verified - then the
-  banner becomes **Restart & install**: one click.
-- A 5-day grace period with snoozes keeps you in control; a machine that is
-  fully offline is never locked out.
-
-| <img src="assets/docs/screenshots/update-ready.png" width="330"> | <img src="assets/docs/screenshots/whatsnew.png" width="330"> |
-|---|---|
-| *Downloaded and verified - one click installs* | *What actually changed, in plain language* |
-
-QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL`, `GHOSTMIND_FORCE_UPDATE=1`,
-`GHOSTMIND_GRACE_DAYS=0`, `GHOSTMIND_TESSERACT_DIR`.
-
-## Settings at a glance
-
-- **General**: monitor selection, scan mode (manual/auto) + interval, opacity, click-through
-- **Shortcuts**: all hotkeys, remappable
-- **API**: Base URL, API key, model selection, credential check
-- **Preferences**: font size (9–24 pt), applied everywhere including rendered answers
-- **Feedback**: talk to the developer
-- **About**: version, GitHub link, Replay tutorial
-- Bottom row: **Save** applies everything; Import/Export move your setup between machines
-
 ## Architecture
-
-```text
-python main.py        # or just run the installed app
-```
 
 The application is a PyQt6 overlay with a provider-agnostic AI core:
 
@@ -300,10 +297,24 @@ compliance with laws, contracts, and platform terms.
 
 ## Community
 
-Bug reports, feedback, and contributions are welcome — please keep
-discussions respectful. Contributors agree to the
-[Code of Conduct](CODE_OF_CONDUCT.md) and should read
-[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+Bug reports, feedback, and contributions are welcome. The best channels:
+
+- **In-app**: Settings → Feedback (anonymous, goes straight to the developer)
+- **Issues**: [github.com/dasunjlk/GhostMind/issues](https://github.com/dasunjlk/GhostMind/issues) for bugs and feature ideas
+- **Security**: the [Security tab](https://github.com/dasunjlk/GhostMind/security) — never public issues
+
+## Contributing
+
+Code and docs improvements are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the branch and
+commit conventions, the quality gates (`ruff` + offline `pytest`), and the
+ground rules (no secrets, no new telemetry, offline test discipline).
+
+## Code of Conduct
+
+By participating in this project you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md) — keep discussions respectful for
+everyone.
 
 ## License
 
