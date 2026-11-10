@@ -302,7 +302,8 @@ compliance with laws, contracts, and platform terms.
 
 Bug reports, feedback, and contributions are welcome — please keep
 discussions respectful. Contributors agree to the
-[Code of Conduct](CODE_OF_CONDUCT.md).
+[Code of Conduct](CODE_OF_CONDUCT.md) and should read
+[CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
 
 ## License
 
