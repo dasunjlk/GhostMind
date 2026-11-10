@@ -1,6 +1,34 @@
+<p align="center">
+  <img src="assets/docs/banner.png" alt="GhostMind — Scan. Ask. Answered." width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/dasunjlk/GhostMind/releases/latest"><img src="https://img.shields.io/github/v/tag/dasunjlk/GhostMind?label=version&color=00FFA3" alt="Version"></a>
+  &nbsp;
+  <a href="https://github.com/dasunjlk/GhostMind/actions/workflows/ci.yml"><img src="https://github.com/dasunjlk/GhostMind/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  &nbsp;
+  <img src="https://img.shields.io/badge/platform-Windows_10%2B-2EA043" alt="Windows 10+">
+  &nbsp;
+  <img src="https://img.shields.io/badge/python-3.11-2EA043" alt="Python 3.11">
+  &nbsp;
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dasunjlk/GhostMind?color=2EA043" alt="MIT License"></a>
+</p>
+
 # GhostMind
 
 GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor and answer what it finds, or you can simply type a question — answers stream from **any OpenAI-compatible provider** (Groq, OpenRouter, and more).
+
+## Screenshots
+
+| Ask anything | Any provider | Send feedback |
+|---|---|---|
+| <img src="assets/docs/screenshots/overlay-home.png" width="280"> | <img src="assets/docs/screenshots/settings-api.png" width="280"> | <img src="assets/docs/screenshots/feedback.png" width="280"> |
+| *Streamed answers with session memory* | *Base URL + key → Check Available Model* | *Anonymous, privacy-safe* |
+
+| Updates | What's New |
+|---|---|
+| <img src="assets/docs/screenshots/update-ready.png" width="280"> | <img src="assets/docs/screenshots/whatsnew.png" width="280"> |
+| *Auto-downloaded, one click to install* | *Plain-language release notes* |
 
 ## Features
 
