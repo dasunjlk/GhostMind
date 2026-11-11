@@ -1,5 +1,5 @@
 # Development / QA tooling (not needed to run the app)
 -r requirements.txt
 
-ruff>=0.16.0
+ruff>=0.17.2
 pytest>=8.0.0
