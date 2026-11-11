@@ -37,10 +37,13 @@ OutputDir=dist
 OutputBaseFilename=GhostMind-Setup-{#MyAppVersion}
 SetupIconFile=assets\icon.ico
 ; Branded wizard (C10): dark side banner with the ghost + wordmark. The
-; classic image is used by every Inno 6 release; the 2x image sharpens it
-; on high-DPI/scaled wizards (Inno Setup 6.3+).
+; classic image is used by every Inno 6 release. The 2x hi-DPI image needs
+; Inno Setup 6.3+; release.yml detects the ISCC version and only defines
+; WizardResizeSupported then (CI hotfix: choco may ship an older compiler).
 WizardImageFile=assets\installer\wizard-side.bmp
+#ifdef WizardResizeSupported
 WizardResizeImageFile=assets\installer\wizard-side-2x.bmp
+#endif
 ; Compression
 Compression=lzma2/ultra64
 ; Ask Windows to close a running GhostMind before replacing files.

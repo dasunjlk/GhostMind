@@ -95,7 +95,22 @@ jobs:
         run: |
           $tag = "${{ github.ref_name }}" -replace '^v', ''
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          & $iscc "/DMyAppVersion=$tag" "installer\ghostmind.iss"
+          # WizardResizeImageFile needs Inno Setup 6.3+; detect the compiler
+          # version and only define the directive when it is supported.
+          $defines = @("/DMyAppVersion=$tag")
+          $fileVersion = (Get-Item $iscc).VersionInfo.FileVersion
+          Write-Host "ISCC version: $fileVersion"
+          if ($fileVersion -match '(\d+)\.(\d+)') {
+            $major = [int]$Matches[1]
+            $minor = [int]$Matches[2]
+            if (($major -gt 6) -or ($major -eq 6 -and $minor -ge 3)) {
+              $defines += "/DWizardResizeSupported"
+              Write-Host "Inno Setup >= 6.3 - hi-DPI wizard image enabled"
+            } else {
+              Write-Host "Inno Setup < 6.3 - skipping WizardResizeImageFile"
+            }
+          }
+          & $iscc @defines "installer\ghostmind.iss"
 
       - name: Build portable zip
         shell: pwsh
