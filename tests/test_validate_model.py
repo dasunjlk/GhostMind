@@ -123,7 +123,7 @@ class TestClassifyApiError:
 
     def test_other_error_includes_detail(self):
         msg = _classify_api_error(RuntimeError("Error code: 413 - payload too large"))
-        assert "api.groq.com" in msg
+        assert msg == "api.groq.com error: Error code: 413 - payload too large"
         assert "413" in msg
 
 
