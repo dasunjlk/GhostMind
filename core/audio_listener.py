@@ -11,10 +11,14 @@ from collections import deque
 from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import numpy as np
-import sounddevice as sd
 from PyQt6.QtCore import QThread, pyqtSignal
 
 logger = logging.getLogger(__name__)
+
+try:
+    import sounddevice as sd
+except ImportError:  # frozen builds bundle the audio stack out (C12)
+    sd = None  # type: ignore
 
 try:
     from faster_whisper import WhisperModel
@@ -58,6 +62,8 @@ def has_microphone() -> bool:
 def get_input_devices() -> List[Dict[str, Any]]:
     """Return all available input audio devices across host APIs."""
     devices = []
+    if sd is None:  # frozen builds without the bundled audio stack (C12)
+        return devices
     hostapis = {i: h.get("name", "") for i, h in enumerate(sd.query_hostapis())}
     for i, d in enumerate(sd.query_devices()):
         ch = int(d.get("max_input_channels", 0))
@@ -85,6 +91,8 @@ def _find_wasapi_hostapi_index() -> Optional[int]:
 
 def find_loopback_device_index() -> Optional[int]:
     """Best-effort search for loopback / stereo mix / system audio recording device."""
+    if sd is None:  # frozen builds without the bundled audio stack (C12)
+        return None
     devices = sd.query_devices()
     # 1. Look for explicit loopback / stereo mix keywords across all host APIs
     keywords = ["stereo mix", "loopback", "what u hear", "wave out", "virtual audio", "cable output"]
@@ -204,6 +212,12 @@ class AudioListener(QThread):
                 "faster-whisper is not installed.\n"
                 "Audio transcription is unavailable.\n"
                 "Install it with: pip install faster-whisper"
+            )
+            return
+        if sd is None:
+            self.failed.emit(
+                "sounddevice is not available.\n"
+                "Audio capture is unavailable in this build."
             )
             return
         self._running = True

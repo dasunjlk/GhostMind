@@ -35,8 +35,56 @@ jobs:
             exit 1
           }
 
+      - name: Verify release assets exist (C15)
+        shell: pwsh
+        run: |
+          $required = @(
+            "assets\icon.ico",
+            "assets\icon_256.png",
+            "assets\installer\wizard-side.bmp",
+            "assets\installer\wizard-side-2x.bmp",
+            "assets\installer\TESSERACT-NOTICE.txt",
+            "RELEASE_NOTES.md"
+          )
+          $missing = @($required | Where-Object { -not (Test-Path $_) })
+          if ($missing.Count -gt 0) {
+            Write-Error "Missing release assets: $($missing -join ', ')"
+            exit 1
+          }
+          # C15: the What's New popup parses this section (utils/whatsnew.py) —
+          # release notes must lead with plain-language bullets.
+          if ((Get-Content "RELEASE_NOTES.md" -Raw) -notmatch "(?m)^### What's New\s*$") {
+            Write-Error "RELEASE_NOTES.md must contain a '### What's New' section heading (consumed by the in-app What's New parser)."
+            exit 1
+          }
+          Write-Host "All release assets present; What's New template OK."
+
       - name: Build app (PyInstaller onedir)
         run: pyinstaller --noconfirm --clean ghostmind.spec
+
+      - name: Stage bundled Tesseract OCR (C11)
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $tess = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path "$tess\tesseract.exe")) {
+            throw "Tesseract staging failed: tesseract.exe not found in $tess"
+          }
+          New-Item -ItemType Directory -Force -Path "dist\staging\tesseract\tessdata" | Out-Null
+          Copy-Item "$tess\tesseract.exe" "dist\staging\tesseract\"
+          Copy-Item "$tess\*.dll" "dist\staging\tesseract\"
+          # Ship the ~4 MB fast-integer English model instead of the ~23 MB default.
+          Invoke-WebRequest `
+            -Uri "https://github.com/tesseract-ocr/tessdata_fast/raw/main/eng.traineddata" `
+            -OutFile "dist\staging\tesseract\tessdata\eng.traineddata"
+          if ((Get-Item "dist\staging\tesseract\tessdata\eng.traineddata").Length -lt 1MB) {
+            throw "eng.traineddata download looks wrong"
+          }
+          if (Test-Path "$tess\LICENSE") {
+            Copy-Item "$tess\LICENSE" "dist\staging\tesseract\"
+          }
+          $mb = [math]::Round(((Get-ChildItem -Recurse "dist\staging" | Measure-Object Length -Sum).Sum / 1MB), 1)
+          Write-Host "Staged tesseract tree: $mb MB"
 
       - name: Install Inno Setup
         shell: pwsh
@@ -53,6 +101,10 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}" -replace '^v', ''
+          # C11: portable builds carry the bundled OCR too.
+          if (Test-Path "dist\staging\tesseract") {
+            Copy-Item "dist\staging\tesseract" "dist\ghostmind\tesseract" -Recurse
+          }
           Compress-Archive -Path "dist\ghostmind\*" -DestinationPath "dist\GhostMind-Portable-$tag.zip"
 
       - name: Generate SHA256SUMS
@@ -71,11 +123,30 @@ jobs:
           }
           $lines | Set-Content -Encoding ascii "dist\SHA256SUMS.txt"
 
+      - name: Assemble release body with size summary (C15)
+        shell: pwsh
+        run: |
+          $setup = (Get-Item "dist\GhostMind-Setup-*.exe" | Select-Object -First 1)
+          $portable = (Get-Item "dist\GhostMind-Portable-*.zip" | Select-Object -First 1)
+          $stagedMb = 0
+          if (Test-Path "dist\staging") {
+            $stagedMb = [math]::Round(((Get-ChildItem -Recurse "dist\staging" | Measure-Object Length -Sum).Sum / 1MB), 1)
+          }
+          function Format-MB($path) {
+            if ($null -eq $path) { return "n/a" }
+            return "{0:N1} MB" -f ($path.Length / 1MB)
+          }
+          $footer = "`n---`n`n"
+          $footer += "**Download sizes:** installer $(Format-MB $setup) · portable $(Format-MB $portable) (bundled OCR adds ~$stagedMb MB before compression).`n"
+          $body = (Get-Content "RELEASE_NOTES.md" -Raw) + $footer
+          Set-Content -Path "dist\release_body.md" -Value $body -Encoding utf8
+          Write-Host "Release body assembled (sizes: setup $(Format-MB $setup), portable $(Format-MB $portable))"
+
       - name: Publish release
         uses: softprops/action-gh-release@v3
         with:
           name: GhostMind ${{ github.ref_name }}
-          body_path: RELEASE_NOTES.md
+          body_path: dist/release_body.md
           files: |
             dist/GhostMind-Setup-*.exe
             dist/GhostMind-Portable-*.zip

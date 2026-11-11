@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import signal
 import sys
 import time
@@ -34,11 +35,12 @@ from PyQt6.QtWidgets import (
     QSystemTrayIcon,
 )
 
-from core.ai_engine import DEFAULT_MODEL, resolve_api_key
+from core.ai_engine import DEFAULT_BASE_URL, DEFAULT_MODEL, resolve_api_key
 from core.audio_listener import AudioListener, has_microphone
 from core.question_detect import is_question
+from core.screen_reader import configure_tesseract_path
 from ui.overlay_window import OverlayWindow
-from utils import app_paths, error_reporter, updater
+from utils import app_paths, error_reporter, feedback, updater
 from utils.hotkey_manager import HotkeyManager
 from version import __version__
 
@@ -46,6 +48,10 @@ from version import __version__
 def check_dependencies() -> List[str]:
     """Check for required packages and return a list of warning messages."""
     warnings: List[str] = []
+
+    # Point pytesseract at the installer-bundled Tesseract first (C11) so
+    # the probe below passes on installed builds with no user-installed OCR.
+    configure_tesseract_path()
 
     # Tesseract binary (pytesseract may be installed but tesseract.exe missing)
     try:
@@ -60,38 +66,42 @@ def check_dependencies() -> List[str]:
             "  Or download from: https://github.com/UB-Mannheim/tesseract/wiki"
         )
 
-    # Groq SDK
+    # OpenAI-compatible SDK (default provider: Groq)
     try:
-        from groq import Groq  # noqa: F401
+        from openai import OpenAI  # noqa: F401
     except ImportError:
         warnings.append(
-            "groq package not installed.\n"
+            "openai package not installed.\n"
             "  AI answers will not work.\n"
-            "  Install: pip install groq"
+            "  Install: pip install openai"
         )
 
     # The Groq API key is optional at startup — new users paste one in
     # Settings -> API on first run. Never warn or block for it here.
 
-    # faster-whisper
-    try:
-        from faster_whisper import WhisperModel  # noqa: F401
-    except ImportError:
-        warnings.append(
-            "faster-whisper not installed.\n"
-            "  Audio transcription will not work.\n"
-            "  Install: pip install faster-whisper"
-        )
+    # faster-whisper — probed only in source runs. Frozen builds
+    # intentionally bundle it out while audio is dormant (C12); installed
+    # users must never see a "missing dependency" banner for it.
+    if not getattr(sys, "frozen", False):
+        try:
+            from faster_whisper import WhisperModel  # noqa: F401
+        except ImportError:
+            warnings.append(
+                "faster-whisper not installed.\n"
+                "  Audio transcription will not work.\n"
+                "  Install: pip install faster-whisper"
+            )
 
-    # sounddevice
-    try:
-        import sounddevice  # noqa: F401
-    except ImportError:
-        warnings.append(
-            "sounddevice not installed.\n"
-            "  Audio capture will not work.\n"
-            "  Install: pip install sounddevice"
-        )
+    # sounddevice — same frozen-aware rule as faster-whisper (C12).
+    if not getattr(sys, "frozen", False):
+        try:
+            import sounddevice  # noqa: F401
+        except ImportError:
+            warnings.append(
+                "sounddevice not installed.\n"
+                "  Audio capture will not work.\n"
+                "  Install: pip install sounddevice"
+            )
 
     # keyboard
     try:
@@ -120,6 +130,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     # UI text size (Preferences tab; 9-24 pt)
     "font_size": 13,
     "click_through": False,
+    # C14: guided tour. Absent/False = first run → auto-starts (non-skippable);
+    # completing it flips this to True; About → Replay tutorial re-runs it.
+    "tutorial_done": False,
     "dwm_cloak": False,
     # v1.0: listening features hidden (future-plan.md hidden-features checklist)
     "subtitles_enabled": False,
@@ -127,7 +140,9 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "capture_system": False,
     "session_type": "meeting",
     "ai_model": DEFAULT_MODEL,
-    # User-added model IDs from the "＋ Add custom model…" flow (API tab)
+    # Provider endpoint (the only provider switch; no provider dropdown).
+    "api_base_url": DEFAULT_BASE_URL,
+    # Model IDs typed/discovered in the API tab, kept for the editable combo.
     "custom_models": [],
 
     "whisper_model": "base",
@@ -203,13 +218,35 @@ def load_settings() -> Dict[str, Any]:
 
 def save_settings(data: Dict[str, Any]) -> None:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    to_save = {k: v for k, v in data.items()}
+    # key_store writes secrets directly to settings.toml; never clobber them
+    # with a stale in-memory snapshot (known plaintext-key loss bug).
+    to_save = {k: v for k, v in data.items() if k != "key_storage"}
+    try:
+        if CONFIG_PATH.is_file():
+            disk = toml.load(CONFIG_PATH)
+            stored = disk.get("key_storage") if isinstance(disk, dict) else None
+            if isinstance(stored, dict) and stored:
+                to_save["key_storage"] = stored
+    except Exception as e:
+        logger.warning("Could not preserve stored keys in %s: %s", CONFIG_PATH, e)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         toml.dump(to_save, f)
 
 
 def _create_tray_icon() -> QIcon:
-    """Create a green-circle tray icon with 'G' letter programmatically."""
+    """System-tray icon from the bundled asset (C9).
+
+    Loads assets/icon_256.png (icon.ico as fallback) from the repo root when
+    running from source and from the PyInstaller bundle directory when
+    frozen. The drawn green-circle glyph is kept only as a last-resort
+    fallback for broken checkouts.
+    """
+    base = Path(getattr(sys, "_MEIPASS", REPO_ROOT))
+    for name in ("icon_256.png", "icon.ico"):
+        candidate = base / "assets" / name
+        if candidate.is_file():
+            return QIcon(str(candidate))
+    logger.warning("Tray icon asset missing; using the drawn fallback glyph")
     size = 64
     pixmap = QPixmap(size, size)
     pixmap.fill(Qt.GlobalColor.transparent)
@@ -250,6 +287,50 @@ class _UpdateCheckWorker(QThread):
         self.done.emit(result)
 
 
+class _UpdateDownloadWorker(QThread):
+    """Background-downloads and SHA-256 verifies the new installer (C7).
+
+    Runs after the update banner has notified the user, so by the time they
+    click install the download is already finished. Failures are silent:
+    the banner stays "available" and the next 6h check retries.
+    """
+
+    result = pyqtSignal(bool, str)  # ok, path-or-error
+
+    def __init__(self, check: Any, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._check = check
+
+    def run(self) -> None:
+        release = {"tag_name": self._check.tag, "assets": self._check.assets}
+        try:
+            path = updater.download_installer(release)
+            self.result.emit(True, str(path))
+        except updater.UpdaterError as e:
+            logger.warning("Background update download failed: %s", e)
+            self.result.emit(False, str(e))
+        except Exception as e:
+            logger.warning("Background update download failed: %s", e)
+            self.result.emit(False, f"Download failed: {e}")
+
+
+class _OutboxFlushWorker(QThread):
+    """Silently resends feedback that failed to send last session (C13)."""
+
+    done = pyqtSignal(int)  # count sent
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+
+    def run(self) -> None:
+        try:
+            sent = feedback.flush_outbox(DATA_DIR)
+        except Exception as e:
+            logger.warning("Feedback outbox flush failed: %s", e)
+            sent = 0
+        self.done.emit(sent)
+
+
 class GhostMindController(QObject):
     """Owns hotkeys, audio thread, settings persistence, and system tray."""
 
@@ -280,6 +361,12 @@ class GhostMindController(QObject):
         self._update_locked = False
         self._update_worker: Optional[_UpdateCheckWorker] = None
         self._update_check_balloon = False
+        # C7: background auto-download of the notified version.
+        self._update_download_worker: Optional[_UpdateDownloadWorker] = None
+        self._update_ready_path: Optional[str] = None
+        # C13: flush unsent feedback shortly after launch (silent, best-effort).
+        self._outbox_worker: Optional[_OutboxFlushWorker] = None
+        QTimer.singleShot(6000, self._flush_feedback_outbox)
         self._update_timer = QTimer(self)
         self._update_timer.setInterval(updater.CHECK_INTERVAL_SEC * 1000)
         self._update_timer.timeout.connect(lambda: self._run_update_check(show_balloon=False))
@@ -304,6 +391,13 @@ class GhostMindController(QObject):
         settings_action = QAction("Settings…", self)
         settings_action.triggered.connect(self._tray_open_settings)
         tray_menu.addAction(settings_action)
+
+        feedback_action = QAction("Send feedback…", self)
+        feedback_action.setToolTip(
+            "Praise, bugs, or ideas — anonymous and privacy-safe (C13)."
+        )
+        feedback_action.triggered.connect(self._tray_open_feedback)
+        tray_menu.addAction(feedback_action)
 
         self._click_through_action = QAction("Click-through: off", self)
         self._click_through_action.setCheckable(True)
@@ -354,6 +448,12 @@ class GhostMindController(QObject):
             self._open_tesseract_download
         )
         self.overlay.settings_closed.connect(self._refresh_api_key_cta)
+        self.overlay.tutorial_finished.connect(self._on_tutorial_finished)
+        self.overlay.update_whats_new_requested.connect(
+            self._on_update_banner_whats_new
+        )
+        self.overlay.update_now_requested.connect(self._on_update_banner_details)
+        self.overlay.update_later_requested.connect(self._on_update_banner_later)
 
         self.hotkeys.toggle_visibility.connect(self.overlay.toggle_visibility_animated)
         self.hotkeys.trigger_screen_scan.connect(self.overlay.trigger_screen_scan)
@@ -392,9 +492,10 @@ class GhostMindController(QObject):
         self._sync_click_through_action()
 
     def _refresh_api_key_cta(self) -> None:
-        """Show the first-run API-key call-to-action whenever no key is available."""
+        """Show the first-run API-key CTA when the current provider has no key."""
+        base_url = str(self.settings.get("api_base_url") or DEFAULT_BASE_URL)
         try:
-            missing = not resolve_api_key()
+            missing = not resolve_api_key(base_url=base_url)
         except Exception as e:
             logger.warning("API key check failed: %s", e)
             missing = True
@@ -488,6 +589,13 @@ class GhostMindController(QObject):
             return
         self._tray_show()
         self.overlay.open_settings()
+
+    def _tray_open_feedback(self) -> None:
+        """Tray path to the Feedback tab (C13)."""
+        if self._update_locked:
+            return
+        self._tray_show()
+        self.overlay.open_feedback_settings()
 
     def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
@@ -635,6 +743,29 @@ class GhostMindController(QObject):
         context_type = "meeting_question" if "?" in text else ("meeting_audio" if st == "meeting" else "lecture_notes")
         self.overlay.request_ai_answer(text, context_type)
 
+    # --- feedback (C13) -------------------------------------------------------
+
+    def _flush_feedback_outbox(self) -> None:
+        """Resend feedback that failed last session (never blocks, never nags)."""
+        if self._outbox_worker is not None and self._outbox_worker.isRunning():
+            return
+        worker = _OutboxFlushWorker(self)
+        self._outbox_worker = worker
+        worker.done.connect(lambda _count: None)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(lambda: setattr(self, "_outbox_worker", None))
+        worker.start()
+
+    # --- tutorial (C14) -------------------------------------------------------
+
+    def _on_tutorial_finished(self, completed: bool) -> None:
+        """Persist first-run tour completion (lightweight — no full apply)."""
+        if not completed:
+            return
+        self.settings["tutorial_done"] = True
+        save_settings(self.settings)
+        logger.info("First-run tutorial completed")
+
     # --- updates (U-01) -----------------------------------------------------
 
     def initial_update_check(self) -> None:
@@ -671,8 +802,88 @@ class GhostMindController(QObject):
             )
         if result.locked:
             self._enter_update_lock(result)
-        elif result.should_popup:
-            self._show_update_popup(result, locked=False)
+        else:
+            # C6: the grace phase surfaces as an in-app banner, not a popup.
+            self._show_update_banner(result)
+
+    def _show_update_banner(self, check: Any) -> None:
+        """Show the in-app banner unless this version is currently snoozed."""
+        state = getattr(check, "state", None) or {}
+        now = int(getattr(check, "now", 0) or time.time())
+        if now < int(state.get("snooze_until_epoch") or 0):
+            self.overlay.hide_update_banner()
+            return
+        tag = str(getattr(check, "tag", "") or "")
+        # C7: a previously verified download for THIS version flips the
+        # banner straight to "ready to install" (survives restarts).
+        if (
+            state.get("downloaded_version") == tag
+            and state.get("downloaded_sha_ok")
+            and Path(str(state.get("downloaded_path") or "")).is_file()
+        ):
+            self._update_ready_path = str(state.get("downloaded_path"))
+            self.overlay.show_update_banner(tag, ready=True)
+            return
+        self._update_ready_path = None
+        self.overlay.show_update_banner(tag)
+        self._maybe_auto_download(check)
+
+    def _maybe_auto_download(self, check: Any) -> None:
+        """C7: the user has been notified — fetch the installer in the background."""
+        if self._update_download_worker is not None and self._update_download_worker.isRunning():
+            return
+        worker = _UpdateDownloadWorker(check, self)
+        self._update_download_worker = worker
+        worker.result.connect(self._on_update_download_result)
+        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._on_update_download_worker_finished)
+        worker.start()
+
+    def _on_update_download_worker_finished(self) -> None:
+        self._update_download_worker = None
+
+    def _on_update_download_result(self, ok: bool, message: str) -> None:
+        if not ok:
+            # Silent: the banner stays "available"; the next 6h check retries
+            # and record_failed_attempt has already fed the safety valve.
+            return
+        self._update_ready_path = message
+        check = self._last_update_check
+        tag = str(getattr(check, "tag", "") or "") if check is not None else ""
+        self.overlay.show_update_banner(tag, ready=True)
+
+    def _run_downloaded_installer(self, path: str) -> None:
+        """C7 one-click install: run the verified installer; the app must exit
+        so Inno Setup can replace its files (same contract as the popup flow)."""
+        try:
+            os.startfile(path)
+            updater.record_popup()
+            app = QApplication.instance()
+            if app is not None:
+                app.quit()
+        except Exception as e:
+            logger.warning("Could not start downloaded installer %s: %s", path, e)
+
+    def _on_update_banner_whats_new(self) -> None:
+        """'What's New' always opens the details popup (C8 makes it read as
+        plain-language What's New bullets)."""
+        if self._last_update_check is None or not self._last_update_check.update_available:
+            return
+        self._show_update_popup(
+            self._last_update_check, locked=bool(self._last_update_check.locked)
+        )
+
+    def _on_update_banner_details(self) -> None:
+        """'Update' one-click-installs the pre-downloaded installer (C7);
+        otherwise it opens the details popup like 'What's New'."""
+        if self._update_ready_path and Path(self._update_ready_path).is_file():
+            self._run_downloaded_installer(self._update_ready_path)
+            return
+        self._on_update_banner_whats_new()
+
+    def _on_update_banner_later(self) -> None:
+        updater.record_snooze()
+        self.overlay.hide_update_banner()
 
     def _show_update_popup(self, check: Any, locked: bool) -> None:
         # Never stack popups (6h timer can fire while one is open).
@@ -705,6 +916,7 @@ class GhostMindController(QObject):
         state = updater.load_state()
         if int(state.get("snooze_until_epoch") or 0) > time.time():
             self._restore_from_update_lock()
+            self.overlay.hide_update_banner()
 
     def _enter_update_lock(self, check: Any) -> None:
         """Grace expired: hide overlay, kill hotkeys, reduce tray, force popup."""
@@ -712,6 +924,7 @@ class GhostMindController(QObject):
             return
         self._update_locked = True
         logger.warning("Update lock engaged (newer version %s, grace expired)", check.tag)
+        self.overlay.hide_update_banner()
         if self.overlay.isVisible():
             self.overlay.toggle_visibility_animated()
         self.overlay.setEnabled(False)
@@ -818,6 +1031,8 @@ def main() -> int:
         )
     except Exception as e:
         logger.warning("Initial stealth apply failed: %s", e)
+    # C14: first-run guided tour (non-skippable, per the implementation plan).
+    QTimer.singleShot(800, ctrl.overlay.maybe_start_first_run_tutorial)
 
     return int(app.exec())
 

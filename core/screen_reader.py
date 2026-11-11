@@ -4,6 +4,9 @@ Multi-monitor capture (mss), OCR (pytesseract), window context detection, and op
 from __future__ import annotations
 
 import logging
+import os
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import mss
@@ -11,6 +14,8 @@ import mss.tools
 import numpy as np
 from PIL import Image
 from PyQt6.QtCore import QObject, QThread, pyqtSignal
+
+from core.screen_focus import isolate_screen_text
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +28,44 @@ try:
     import pytesseract
 except ImportError:  # pragma: no cover
     pytesseract = None  # type: ignore
+
+_TESSERACT_DIR_ENV = "GHOSTMIND_TESSERACT_DIR"
+
+
+def _bundled_tesseract_exe() -> Optional[Path]:
+    """Locate the installer-bundled Tesseract, if present (C11).
+
+    Resolution order: the GHOSTMIND_TESSERACT_DIR QA hook (a wrong override
+    wins over detection — an empty result stays empty), then
+    <exe_dir>\\tesseract in frozen builds. Source runs return None and keep
+    the normal PATH lookup.
+    """
+    override = os.environ.get(_TESSERACT_DIR_ENV, "").strip()
+    if override:
+        candidate = Path(override) / "tesseract.exe"
+        return candidate if candidate.is_file() else None
+    if not getattr(sys, "frozen", False):
+        return None
+    candidate = Path(sys.executable).resolve().parent / "tesseract" / "tesseract.exe"
+    return candidate if candidate.is_file() else None
+
+
+def configure_tesseract_path() -> Optional[Path]:
+    """Point pytesseract at the bundled Tesseract when present (C11).
+
+    Called before the startup dependency check so installed builds pass the
+    OCR probe without any user-installed Tesseract. Cheap and idempotent —
+    the last call wins. Returns the tesseract.exe path when configured, or
+    None when the default PATH lookup applies.
+    """
+    if pytesseract is None:
+        return None
+    exe = _bundled_tesseract_exe()
+    if exe is not None:
+        pytesseract.pytesseract.tesseract_cmd = str(exe)
+        logger.info("Using bundled Tesseract: %s", exe)
+        return exe
+    return None
 
 
 def get_active_window_title() -> str:
@@ -181,17 +224,19 @@ class ScreenScanWorker(QThread):
             active_title = get_active_window_title()
             meeting_app = detect_meeting_app()
             text = scan_and_extract(self._monitor_id)
+            isolated = isolate_screen_text(text)
 
-            # Enrich text with active window context if available
-            combined = text
+            # Enrich the isolated question with active window context if available
+            combined = isolated
             if active_title and "ghostmind" not in active_title.lower():
                 header = f"[Active Window: {active_title}]"
                 if meeting_app:
                     header += f" [Meeting App: {meeting_app}]"
-                combined = f"{header}\n\n{text}" if text else header
+                combined = f"{header}\n\n{isolated}" if isolated else header
 
             self.finished_details.emit({
                 "ocr_text": text,
+                "isolated_text": isolated,
                 "active_window": active_title,
                 "meeting_app": meeting_app,
                 "combined_text": combined,

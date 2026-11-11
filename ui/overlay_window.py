@@ -3,6 +3,8 @@ Main frameless always-on-top overlay: tabs, custom resize, header drag, stealth 
 """
 from __future__ import annotations
 
+from collections import deque
+from dataclasses import dataclass
 from enum import IntFlag, auto
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -47,14 +49,23 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from core.ai_engine import DEFAULT_MODEL, AiStreamWorker, estimate_visible_tokens
+from core.ai_engine import (
+    DEFAULT_BASE_URL,
+    DEFAULT_MODEL,
+    AiStreamWorker,
+    estimate_visible_tokens,
+    resolve_api_key,
+)
 from core.screen_reader import ScreenScanWorker
+from core.session_memory import MEMORY_CONTEXTS, SessionMemory
 from core.stealth import apply_stealth
 from ui.answer_panel import AnswerPanel
 from ui.click_through_banner import ClickThroughBanner
 from ui.dependency_banner import DependencyBanner
 from ui.settings_panel import SettingsPanel
 from ui.subtitle_bar import SubtitleBar
+from ui.tutorial import TutorialController, build_steps
+from ui.update_banner import UpdateBanner
 
 
 class Edge(IntFlag):
@@ -259,6 +270,21 @@ class _CaptureIconWidget(QWidget):
             p.drawLine(QPointF(r.left() + 4, r.top() + 4), QPointF(right_edge - 4, bottom_edge - 4))
 
 
+MAX_AI_QUEUE = 4
+AI_QUEUE_OVERFLOW_MESSAGE = (
+    "Too many questions at once — they'll be answered one by one; "
+    "try again in a moment."
+)
+
+
+@dataclass(frozen=True)
+class _AiRequest:
+    """One queued AI request; capacity is measured when it starts."""
+
+    content: str
+    context_type: str
+
+
 def _is_worker_active(worker: Optional[QThread]) -> bool:
     """Safely check if a QThread worker is alive without triggering C++ deleted object errors."""
     if worker is None:
@@ -283,6 +309,10 @@ class OverlayWindow(QMainWindow):
     summarize_meeting_requested = pyqtSignal()
     install_tesseract_requested = pyqtSignal()
     settings_closed = pyqtSignal()
+    tutorial_finished = pyqtSignal(bool)
+    update_whats_new_requested = pyqtSignal()
+    update_now_requested = pyqtSignal()
+    update_later_requested = pyqtSignal()
 
     def __init__(self, settings: Dict[str, Any], repo_root: Path, parent=None) -> None:
         super().__init__(parent)
@@ -293,8 +323,14 @@ class OverlayWindow(QMainWindow):
         self._resize_start_geom: Optional[QRect] = None
         self._ai_worker: Optional[AiStreamWorker] = None
         self._scan_worker: Optional[ScreenScanWorker] = None
+        self._memory = SessionMemory()
+        self._ai_queue: deque[_AiRequest] = deque()
+        self._active_worker_id: Optional[int] = None
+        self._next_worker_id = 0
         self._visible_target = True
         self.close_event_allowed = True
+        self._update_banner_active = False
+        self._tutorial: Optional[TutorialController] = None
         self._opacity_anim: Optional[QVariantAnimation] = None
         self._restoring_geometry = False
         self._geometry_save_timer = QTimer(self)
@@ -398,6 +434,7 @@ class OverlayWindow(QMainWindow):
             "QPushButton:hover { background: #222222; color: #00FF88; }"
         )
         btn_set.clicked.connect(self._toggle_settings)
+        self._btn_set = btn_set  # C14 tour target (first tour step)
 
         # Quick capture toggles (Zoom-style): click to enable/disable mic / system
         # audio. Kept in sync with the Audio tab via settings_changed/apply_settings.
@@ -444,6 +481,14 @@ class OverlayWindow(QMainWindow):
 
         root.addWidget(header)
 
+        self._update_banner = UpdateBanner()
+        self._update_banner.whats_new_requested.connect(
+            self.update_whats_new_requested.emit
+        )
+        self._update_banner.update_requested.connect(self.update_now_requested.emit)
+        self._update_banner.later_requested.connect(self.update_later_requested.emit)
+        root.addWidget(self._update_banner)
+
         self._ct_banner = ClickThroughBanner()
         self._ct_banner.disable_requested.connect(
             self._disable_click_through_from_banner
@@ -474,6 +519,7 @@ class OverlayWindow(QMainWindow):
 
         self._answer_panel = AnswerPanel()
         self._answer_panel.key_setup_requested.connect(self._open_api_settings)
+        self._answer_panel.clear_clicked.connect(self._memory.clear)
         self._subtitle_bar = SubtitleBar()
         sub_host = QWidget()
         sl = QVBoxLayout(sub_host)
@@ -512,7 +558,11 @@ class OverlayWindow(QMainWindow):
             "QPushButton:disabled { color:#556; border-color:#556; }"
         )
         self._ask_btn.clicked.connect(self._send_manual_question)
+        self._queue_label = QLabel("")
+        self._queue_label.setStyleSheet("color:#888;font-size:11px;")
+        self._queue_label.hide()
         ask_lay.addWidget(self._ask_input, 1)
+        ask_lay.addWidget(self._queue_label)
         ask_lay.addWidget(self._ask_btn)
         mp_lay.addWidget(self._ask_row)
 
@@ -521,6 +571,9 @@ class OverlayWindow(QMainWindow):
         self._settings_panel.saved.connect(self._on_settings_saved)
         self._settings_panel.close_requested.connect(self._close_settings)
         self._settings_panel.opacity_preview.connect(self._apply_window_opacity)
+        self._settings_panel.replay_tutorial_requested.connect(
+            lambda: self.start_tutorial(replay=True)
+        )
 
         self._subtitle_bar.save_requested.connect(self.export_requested.emit)
         self._subtitle_bar.summarize_requested.connect(self.summarize_meeting_requested.emit)
@@ -623,12 +676,29 @@ class OverlayWindow(QMainWindow):
         else:
             self._fade_to(0.0, hide_on_finish=True)
 
-    def request_ai_answer(self, content: str, context_type: str = "screen") -> None:
-        """Run Groq on arbitrary text (e.g. meeting question or transcript)."""
-        if not (content or "").strip():
-            return
+    def request_ai_answer(
+        self,
+        content: str,
+        context_type: str = "screen",
+        *,
+        echo_user: bool = False,
+    ) -> bool:
+        """Queue an AI request; returns False when the queue is full.
+
+        `echo_user` is used by the manual Ask box: the chat bubble is added
+        only after the request has been accepted into the queue.
+        """
+        text = (content or "").strip()
+        if not text:
+            return False
         self._tabs.setCurrentIndex(0)
-        self._start_ai(content.strip(), context_type)
+        if not self._enqueue_ai_request(text, context_type):
+            self._answer_panel.add_error_block(AI_QUEUE_OVERFLOW_MESSAGE)
+            return False
+        if echo_user:
+            self._answer_panel.add_user_message(text)
+        self._start_next_ai()
+        return True
 
     def focus_question_input(self) -> None:
         """Hotkey target (Ctrl+Shift+Q): surface the overlay and focus the Ask box."""
@@ -645,22 +715,20 @@ class OverlayWindow(QMainWindow):
         text = self._ask_input.text().strip()
         if not text:
             return
-        if _is_worker_active(self._ai_worker):
-            # Send rejected: keep the typed text so nothing is lost.
-            self._answer_panel.end_stream_error("Already processing another answer.")
-            return
+        # Chat-style: echo the user's message only after a successful enqueue.
+        # Scan/OCR answers do not get this bubble — only typed messages do (F-01).
+        if not self.request_ai_answer(text, "manual", echo_user=True):
+            return  # queue full: keep the typed text so nothing is lost
         self._ask_input.clear()  # accepted: free the box for the next question
-        # Chat-style: echo the user's message in the panel. Scan/OCR answers do
-        # not get this bubble — only typed messages do (F-01).
-        self._answer_panel.add_user_message(text)
-        self.request_ai_answer(text, "manual")
 
     def trigger_screen_scan(self) -> None:
         if _is_worker_active(self._scan_worker):
             return
         mid = int(self._settings.get("monitor_id", 1))
         self._tabs.setCurrentIndex(0)
-        self._answer_panel.start_thinking()
+        if self._active_worker_id is None:
+            # Never reset the buffer of an answer that is still streaming.
+            self._answer_panel.start_thinking()
         self._btn_scan.setEnabled(False)
         worker = ScreenScanWorker(mid)
         self._scan_worker = worker
@@ -677,7 +745,10 @@ class OverlayWindow(QMainWindow):
         worker.start()
 
     def clear_answers(self) -> None:
+        self._ai_queue.clear()
+        self._update_queue_label()
         self._answer_panel.clear_all()
+        self._memory.clear()
 
     def toggle_subtitles_tab(self) -> None:
         # v1.0: subtitles tab hidden (future-plan.md checklist). Re-enabling the
@@ -695,23 +766,76 @@ class OverlayWindow(QMainWindow):
     def show_dependency_warnings(self, warnings: list[str]) -> None:
         self._dep_banner.show_warnings(warnings)
 
+    def show_update_banner(self, version: str, ready: bool = False) -> None:
+        """Mark the update banner active; visible only while Settings is closed.
+
+        ready=True (C7) flips it to 'Version X is ready to install' with a
+        one-click 'Restart & install' action.
+        """
+        self._update_banner_active = True
+        if ready:
+            self._update_banner.set_ready(version)
+        else:
+            self._update_banner.set_version(version)
+        if not self.is_settings_open():
+            self._update_banner.show()
+
+    def hide_update_banner(self) -> None:
+        self._update_banner_active = False
+        self._update_banner.hide()
+
     def set_api_key_missing(self, missing: bool) -> None:
         self._answer_panel.set_api_key_missing(missing)
 
-    def open_settings(self, focus_api: bool = False) -> None:
+    def open_settings(self, focus_api: bool = False, focus_feedback: bool = False) -> None:
         """Show the Settings page without toggling it closed."""
         if self._click_through_enabled():
             self.set_click_through(False)
             self.click_through_changed.emit(False)
         if self._stack.currentIndex() != 1:
             self._dep_banner.hide()
+            self._update_banner.hide()
             self._settings_panel.apply_data(self._settings)
             self._stack.setCurrentIndex(1)
             self._settings_panel.show()
         if focus_api:
             self._settings_panel.focus_api_tab()
+        if focus_feedback:
+            self._settings_panel.focus_feedback_tab()
         self.raise_()
         self.activateWindow()
+
+    def open_feedback_settings(self) -> None:
+        """Open Settings on the Feedback tab (tray 'Send feedback…', C13)."""
+        self.open_settings(focus_feedback=True)
+
+    def show_main_page(self) -> None:
+        """Return to the main (home) page if Settings is open (C14 tour)."""
+        if self._stack.currentIndex() == 1:
+            self._close_settings()
+
+    # ------------------------------------------------------ tutorial (C14) --
+
+    def maybe_start_first_run_tutorial(self) -> None:
+        """Auto-start the tour for first-time users (never for completed ones)."""
+        if bool(self._settings.get("tutorial_done", False)):
+            return
+        self.start_tutorial(replay=False)
+
+    def start_tutorial(self, replay: bool) -> None:
+        """Run the guided tour. First run is non-skippable; replays can skip."""
+        if self._tutorial is not None and self._tutorial.active:
+            return
+        controller = TutorialController(
+            self, build_steps(self, self._settings_panel), replay, self
+        )
+        controller.finished.connect(self._on_tutorial_finished)
+        self._tutorial = controller
+        controller.start()
+
+    def _on_tutorial_finished(self, completed: bool) -> None:
+        self._tutorial = None
+        self.tutorial_finished.emit(completed)
 
     def _open_api_settings(self) -> None:
         self.open_settings(focus_api=True)
@@ -723,6 +847,8 @@ class OverlayWindow(QMainWindow):
         if self._stack.currentIndex() == 1:
             self._settings_panel.hide()
             self._stack.setCurrentIndex(0)
+        if self._update_banner_active:
+            self._update_banner.show()
         self.settings_closed.emit()
 
     def _toggle_settings(self) -> None:
@@ -748,11 +874,15 @@ class OverlayWindow(QMainWindow):
 
     def _on_scan_done(self, text: str) -> None:
         if not text.strip():
-            self._answer_panel.end_stream_error(
+            message = (
                 "OCR returned no text. The screen may be blank or Tesseract could not read it."
             )
+            if self._active_worker_id is not None:
+                self._answer_panel.add_error_block(message)
+            else:
+                self._answer_panel.end_stream_error(message)
             return
-        self._start_ai(text, "screen")
+        self.request_ai_answer(text, "screen")
 
     def _on_scan_fail(self, err: str) -> None:
         msg = str(err)
@@ -768,17 +898,47 @@ class OverlayWindow(QMainWindow):
             )
         else:
             friendly = f"Screen scan error: {msg}"
-        self._answer_panel.end_stream_error(friendly)
+        if self._active_worker_id is not None:
+            # Never overwrite an answer that is still streaming.
+            self._answer_panel.add_error_block(friendly)
+        else:
+            self._answer_panel.end_stream_error(friendly)
+
+    def _ai_outstanding(self) -> int:
+        """Requests in flight, counting the active one."""
+        return len(self._ai_queue) + (1 if self._active_worker_id is not None else 0)
+
+    def _enqueue_ai_request(self, content: str, context_type: str) -> bool:
+        if self._ai_outstanding() >= MAX_AI_QUEUE:
+            return False
+        self._ai_queue.append(_AiRequest(content=content, context_type=context_type))
+        self._update_queue_label()
+        return True
+
+    def _start_next_ai(self) -> None:
+        if self._active_worker_id is not None:
+            return
+        if not self._ai_queue:
+            self._update_queue_label()
+            return
+        request = self._ai_queue.popleft()
+        self._update_queue_label()
+        self._start_ai(request.content, request.context_type)
+
+    def _update_queue_label(self) -> None:
+        count = len(self._ai_queue)
+        self._queue_label.setText(f"{count} queued…")
+        self._queue_label.setVisible(count > 0)
 
     def _start_ai(self, content: str, context_type: str) -> None:
-        if _is_worker_active(self._ai_worker):
-            if context_type == "meeting_audio":
-                return
-            self._answer_panel.stop_thinking()
-            self._answer_panel.end_stream_error("Already processing another answer.")
-            return
+        remember = context_type in MEMORY_CONTEXTS
+        history = self._memory.window() if remember else []
+        if remember:
+            self._memory.add_question(content, context_type)
 
         model_id = str(self._settings.get("ai_model", DEFAULT_MODEL))
+        base_url = str(self._settings.get("api_base_url") or DEFAULT_BASE_URL)
+        api_key = resolve_api_key(base_url=base_url)
         viewport = self._answer_panel._scroll.viewport()
         capacity = estimate_visible_tokens(
             viewport.width(),
@@ -786,20 +946,58 @@ class OverlayWindow(QMainWindow):
             int(self._settings.get("font_size", 13)),
         )
 
-        self._answer_panel.begin_answer_stream()
-        worker = AiStreamWorker(content, context_type, model_id=model_id, capacity=capacity)
+        worker_id = self._next_worker_id
+        self._next_worker_id += 1
+        self._active_worker_id = worker_id
+
+        self._answer_panel.begin_answer_stream(worker_id=worker_id)
+        worker_kwargs: Dict[str, Any] = {
+            "model_id": model_id,
+            "capacity": capacity,
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+        if history:
+            worker_kwargs["history"] = history
+        worker = AiStreamWorker(content, context_type, **worker_kwargs)
         self._ai_worker = worker
 
-        def _cleanup_ai() -> None:
-            if self._ai_worker is worker:
-                self._ai_worker = None
-
-        worker.chunk_received.connect(self._answer_panel.append_stream_chunk)
-        worker.finished_ok.connect(self._answer_panel.end_stream_success)
-        worker.failed.connect(self._answer_panel.end_stream_error)
-        worker.finished.connect(_cleanup_ai)
+        worker.chunk_received.connect(
+            lambda chunk, wid=worker_id: self._on_ai_chunk(wid, chunk)
+        )
+        worker.finished_ok.connect(lambda wid=worker_id: self._on_ai_finished(wid))
+        worker.failed.connect(
+            lambda message, wid=worker_id: self._on_ai_failed(wid, message)
+        )
+        worker.finished.connect(
+            lambda wid=worker_id: self._on_ai_worker_finished(wid)
+        )
         worker.finished.connect(worker.deleteLater)
         worker.start()
+
+    def _on_ai_chunk(self, worker_id: int, chunk: str) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        self._answer_panel.append_stream_chunk(chunk, worker_id=worker_id)
+
+    def _on_ai_finished(self, worker_id: int) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        answer = self._answer_panel.end_stream_success(worker_id=worker_id)
+        self._memory.add_answer(answer)
+
+    def _on_ai_failed(self, worker_id: int, message: str) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        self._memory.discard_pending()
+        self._answer_panel.end_stream_error(message, worker_id=worker_id)
+
+    def _on_ai_worker_finished(self, worker_id: int) -> None:
+        if worker_id != self._active_worker_id:
+            return
+        self._active_worker_id = None
+        self._ai_worker = None
+        self._start_next_ai()
 
 
     def _apply_window_opacity(self, op: float) -> None:
@@ -840,6 +1038,15 @@ class OverlayWindow(QMainWindow):
         rect = QRect(self._ct_banner.mapToGlobal(QPoint(0, 0)), self._ct_banner.size())
         return rect.contains(_global_cursor_pos())
 
+    def _pointer_in_update_banner(self) -> bool:
+        """True while the cursor is over the update banner."""
+        if self._update_banner.isHidden():
+            return False
+        rect = QRect(
+            self._update_banner.mapToGlobal(QPoint(0, 0)), self._update_banner.size()
+        )
+        return rect.contains(_global_cursor_pos())
+
     def _sync_click_guard_timer(self) -> None:
         """Run the guard poll only while click-through is on and the window is shown."""
         if self._click_through_enabled() and self.isVisible():
@@ -850,7 +1057,8 @@ class OverlayWindow(QMainWindow):
             self._click_guard_interactive = False
 
     def _update_click_guard(self) -> None:
-        """Keep the header, click-through banner, and open Settings clickable.
+        """Keep the header, update banner, click-through banner, and open
+        Settings clickable.
 
         The rest of the overlay stays transparent and passes clicks through.
         """
@@ -862,6 +1070,7 @@ class OverlayWindow(QMainWindow):
                 self.is_settings_open()
                 or self._pointer_in_header()
                 or self._pointer_in_click_through_banner()
+                or self._pointer_in_update_banner()
             )
         )
         if interactive != self._click_guard_interactive:
@@ -884,16 +1093,22 @@ class OverlayWindow(QMainWindow):
     def showEvent(self, e) -> None:
         super().showEvent(e)
         QTimer.singleShot(50, self._reapply_stealth)
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def moveEvent(self, e) -> None:
         super().moveEvent(e)
         self._reapply_stealth()
         self._schedule_geometry_save()
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self._reapply_stealth()
         self._schedule_geometry_save()
+        if self._tutorial is not None:
+            self._tutorial.reposition()
 
     def hideEvent(self, e) -> None:
         super().hideEvent(e)
@@ -1050,6 +1265,10 @@ class OverlayWindow(QMainWindow):
         """Handle keyboard navigation within the overlay."""
         key = e.key()
         if key == Qt.Key.Key_Escape:
+            if self._tutorial is not None:
+                # C14: first-run tour consumes Esc (inert); replay tours skip.
+                self._tutorial.handle_escape()
+                return
             if self._stack.currentIndex() == 1:
                 self._toggle_settings()
             else:

@@ -1,0 +1,20 @@
+GhostMind bundles Tesseract OCR so the installer is self-sufficient —
+screen scanning works with nothing else to install.
+
+Tesseract OCR
+  https://github.com/tesseract-ocr/tesseract
+  Copyright 1985-2026 The Tesseract OCR Authors and Google Inc.
+  Licensed under the Apache License, Version 2.0 (the "License");
+  you may not use these files except in compliance with the License.
+  You may obtain a copy of the License at
+  https://www.apache.org/licenses/LICENSE-2.0
+
+  The full Apache License 2.0 text ships alongside this notice as the
+  upstream LICENSE file when one is present in the staged build.
+
+English language data: eng.traineddata from tessdata_fast
+  https://github.com/tesseract-ocr/tessdata_fast
+  Licensed under the Apache License, Version 2.0.
+
+The bundled files are unmodified copies of the upstream projects,
+selected so that only the English fast-integer model is shipped.

@@ -1,6 +1,6 @@
 """Tests for ai_engine key/model validation (validate_key_and_model).
 
-Pure logic tests: the Groq client is faked, no network, no Qt.
+Pure logic tests: the OpenAI-compatible client is faked, no network, no Qt.
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 
 import core.ai_engine as ai_engine
 from core.ai_engine import (
-    ADD_CUSTOM_MODEL_SENTINEL,
+    DEFAULT_BASE_URL,
     _classify_api_error,
     resolve_api_key,
     validate_key_and_model,
@@ -23,7 +23,7 @@ class _FakeModels:
 
 
 def _make_client_factory(monkeypatch, ids=None, error: Exception | None = None):
-    """Patch core.ai_engine.Groq with a fake whose models.list behaves as given."""
+    """Patch core.ai_engine.OpenAI with a fake whose models.list behaves as given."""
     ids = ids if ids is not None else ["qwen/qwen3.8-27b", "openai/gpt-oss-120b"]
 
     class _ModelsApi:
@@ -33,11 +33,12 @@ def _make_client_factory(monkeypatch, ids=None, error: Exception | None = None):
             return _FakeModels(ids)
 
     class _Client:
-        def __init__(self, api_key=None):
+        def __init__(self, base_url=None, api_key=None):
+            self.base_url = base_url
             self.api_key = api_key
             self.models = _ModelsApi()
 
-    monkeypatch.setattr(ai_engine, "Groq", _Client)
+    monkeypatch.setattr(ai_engine, "OpenAI", _Client)
     return _Client
 
 
@@ -48,7 +49,9 @@ def clean_env(monkeypatch):
 
 class TestValidateNoKey:
     def test_no_key_anywhere(self, monkeypatch):
-        monkeypatch.setattr(ai_engine, "resolve_api_key", lambda explicit="": "")
+        monkeypatch.setattr(
+            ai_engine, "resolve_api_key", lambda explicit=None, base_url=None: ""
+        )
         ok, msg = validate_key_and_model()
         assert ok is False
         assert "Settings" in msg or "console.groq.com" in msg
@@ -67,7 +70,7 @@ class TestValidateKeyRejected:
         _make_client_factory(monkeypatch, error=ConnectionError("getaddrinfo failed"))
         ok, msg = validate_key_and_model(api_key="gsk_ok", model_id="qwen/qwen3.8-27b")
         assert ok is False
-        assert "network" in msg.lower() or "internet" in msg.lower()
+        assert "couldn't reach" in msg.lower() or "base url" in msg.lower()
 
 
 class TestValidateModelMatch:
@@ -83,7 +86,7 @@ class TestValidateModelMatch:
             api_key="gsk_ok", model_id="llama-3.3-70b-versatile"
         )
         assert ok is False
-        assert "not available" in msg.lower()
+        assert "isn't available" in msg.lower()
         assert "llama-3.3-70b-versatile" in msg
 
     def test_empty_catalog_means_no_model_check(self, monkeypatch):
@@ -99,12 +102,14 @@ class TestValidateModelMatch:
         ok, _msg = validate_key_and_model(api_key="gsk_ok", model_id="my-org/my-fine-tune")
         assert ok is True
 
-    def test_groq_not_installed(self, monkeypatch):
-        monkeypatch.setattr(ai_engine, "Groq", None)
-        monkeypatch.setattr(ai_engine, "resolve_api_key", lambda explicit="": "gsk_ok")
+    def test_openai_not_installed(self, monkeypatch):
+        monkeypatch.setattr(ai_engine, "OpenAI", None)
+        monkeypatch.setattr(
+            ai_engine, "resolve_api_key", lambda explicit=None, base_url=None: "gsk_ok"
+        )
         ok, msg = validate_key_and_model()
         assert ok is False
-        assert "pip install groq" in msg
+        assert "pip install openai" in msg
 
 
 class TestClassifyApiError:
@@ -114,11 +119,11 @@ class TestClassifyApiError:
 
     def test_timeout(self):
         msg = _classify_api_error(RuntimeError("The read operation timed out"))
-        assert "network" in msg.lower()
+        assert "couldn't reach" in msg.lower() or "base url" in msg.lower()
 
     def test_other_error_includes_detail(self):
         msg = _classify_api_error(RuntimeError("Error code: 413 - payload too large"))
-        assert "Groq error" in msg
+        assert msg == "api.groq.com error: Error code: 413 - payload too large"
         assert "413" in msg
 
 
@@ -128,7 +133,7 @@ class TestResolveApiKey:
         """Keep tests off the developer's real Windows Credential Manager key."""
         import utils.key_store
 
-        monkeypatch.setattr(utils.key_store, "load_key", lambda: "")
+        monkeypatch.setattr(utils.key_store, "load_key_for", lambda host: "")
 
     def test_explicit_beats_everything(self, monkeypatch):
         monkeypatch.setenv("GROQ_API_KEY", "env_key")
@@ -142,7 +147,7 @@ class TestResolveApiKey:
         monkeypatch.setenv("GROQ_API_KEY", "env_key")
         assert resolve_api_key("   ") == "env_key"
 
-
-class TestSentinel:
-    def test_sentinel_is_not_a_real_model(self):
-        assert ADD_CUSTOM_MODEL_SENTINEL not in [m for m, _ in ai_engine.AVAILABLE_MODELS]
+    def test_env_fallback_is_scoped_to_groq_default(self, monkeypatch):
+        monkeypatch.setenv("GROQ_API_KEY", "env_key")
+        assert resolve_api_key(base_url=DEFAULT_BASE_URL) == "env_key"
+        assert resolve_api_key(base_url="https://openrouter.ai/api/v1") == ""

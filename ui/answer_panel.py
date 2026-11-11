@@ -58,8 +58,14 @@ class _ThinkingDots(QWidget):
 class _AnswerBlock(QWidget):
     copy_requested = pyqtSignal(str)
 
-    def __init__(self, parent=None, font_pt: int = 13) -> None:
+    def __init__(
+        self,
+        parent=None,
+        font_pt: int = 13,
+        worker_id: Optional[int] = None,
+    ) -> None:
         super().__init__(parent)
+        self.worker_id = worker_id
         self._raw_markdown = ""
         self._font_pt = int(font_pt)
         self._measured_width = 0
@@ -157,6 +163,7 @@ class AnswerPanel(QWidget):
         super().__init__(parent)
         self._blocks: List[_AnswerBlock] = []
         self._current_block: Optional[_AnswerBlock] = None
+        self._current_worker_id: Optional[int] = None
         self._stream_buffer = ""
         self._thinking: Optional[_ThinkingDots] = None
         self._font_pt = 13
@@ -166,6 +173,7 @@ class AnswerPanel(QWidget):
         title.setStyleSheet("color:#00FF88;font-weight:bold;font-size:13px;")
         clear_btn = QPushButton("Clear")
         clear_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        clear_btn.setToolTip("Also forgets this session's conversation.")
         clear_btn.setStyleSheet(
             "QPushButton { background:#1A1A1A;color:#E0E0E0;border:1px solid #333;padding:3px 10px; border-radius:3px; font-size:11px; }"
             "QPushButton:hover { background:#2A2A2A;color:#FFF; }"
@@ -236,6 +244,7 @@ class AnswerPanel(QWidget):
     def clear_all(self) -> None:
         self._stream_buffer = ""
         self._current_block = None
+        self._current_worker_id = None
         self._hide_thinking()
         for b in self._blocks:
             b.deleteLater()
@@ -296,39 +305,72 @@ class AnswerPanel(QWidget):
             self._thinking.deleteLater()
             self._thinking = None
 
-    def begin_answer_stream(self) -> None:
+    def begin_answer_stream(self, worker_id: Optional[int] = None) -> None:
         self._hide_thinking()
         self._stream_buffer = ""
-        block = _AnswerBlock(self._inner, font_pt=self._font_pt)
+        block = _AnswerBlock(
+            self._inner,
+            font_pt=self._font_pt,
+            worker_id=worker_id,
+        )
         block.copy_requested.connect(self._copy_to_clipboard)
         self._inner_layout.addWidget(block)
         self._blocks.append(block)
         self._current_block = block
+        self._current_worker_id = worker_id
         self._scroll_to_bottom()
 
-    def append_stream_chunk(self, chunk: str) -> None:
+    def _accepts(self, worker_id: Optional[int]) -> bool:
+        """Reject late signals from a worker that no longer owns the stream."""
+        return worker_id is None or worker_id == self._current_worker_id
+
+    def append_stream_chunk(
+        self,
+        chunk: str,
+        worker_id: Optional[int] = None,
+    ) -> None:
+        if not self._accepts(worker_id):
+            return
         self._stream_buffer += chunk
         if self._current_block:
             self._current_block.set_streaming_plain(self._stream_buffer)
             self._scroll_to_bottom()
 
-    def end_stream_success(self) -> None:
+    def end_stream_success(self, worker_id: Optional[int] = None) -> str:
+        """Finalize the active answer and return its plain text."""
+        if not self._accepts(worker_id):
+            return ""
+        text = self._stream_buffer
         if self._current_block:
-            self._current_block.finalize_markdown(self._stream_buffer)
+            self._current_block.finalize_markdown(text)
         self._current_block = None
+        self._current_worker_id = None
         self._stream_buffer = ""
+        return text
 
-    def end_stream_error(self, message: str) -> None:
+    def end_stream_error(
+        self,
+        message: str,
+        worker_id: Optional[int] = None,
+    ) -> None:
+        if not self._accepts(worker_id):
+            return
         self._hide_thinking()
         if self._current_block:
             self._current_block.set_html(f"<p style='color:#FF4444;'>{message}</p>")
         else:
-            block = _AnswerBlock(self._inner, font_pt=self._font_pt)
-            block.set_html(f"<p style='color:#FF4444;'>{message}</p>")
-            self._inner_layout.addWidget(block)
-            self._blocks.append(block)
+            self.add_error_block(message)
         self._current_block = None
+        self._current_worker_id = None
         self._stream_buffer = ""
+        self._scroll_to_bottom()
+
+    def add_error_block(self, message: str) -> None:
+        """Show an inline error without touching an answer that is streaming."""
+        block = _AnswerBlock(self._inner, font_pt=self._font_pt)
+        block.set_html(f"<p style='color:#FF4444;'>{message}</p>")
+        self._inner_layout.addWidget(block)
+        self._blocks.append(block)
         self._scroll_to_bottom()
 
     def _copy_to_clipboard(self, text: str) -> None:

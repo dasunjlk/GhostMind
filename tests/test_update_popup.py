@@ -4,10 +4,11 @@ Uses a real QApplication (no exec), spies on the state recorders, no network.
 """
 from __future__ import annotations
 
+import json
 from typing import List
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QDialog
+from PyQt6.QtWidgets import QApplication, QDialog, QPushButton
 
 import utils.updater as updater
 from ui.update_popup import UpdatePopup
@@ -146,3 +147,189 @@ class TestInstallerLaunch:
 
         assert launched == [popup._installer_path]
         assert quit_calls == [True], "app must quit so Inno Setup can replace files"
+
+
+class TestGraceBannerSuppression:
+    """C6: a grace-phase check must show the in-app banner, never the popup."""
+
+    @pytest.fixture
+    def controller(self, qapp, monkeypatch):
+        import main as app_main
+
+        monkeypatch.setattr(app_main, "resolve_api_key", lambda **kwargs: "")
+        monkeypatch.setattr(
+            app_main.GhostMindController, "_register_hotkeys", lambda self: None
+        )
+        ctrl = app_main.GhostMindController(qapp, dict(app_main.DEFAULT_SETTINGS))
+        ctrl._update_timer.stop()
+        yield ctrl
+        ctrl._update_timer.stop()
+        if ctrl._update_popup is not None:
+            ctrl._update_popup.close()
+            ctrl._update_popup.deleteLater()
+        ctrl.hotkeys.unregister_all()
+        ctrl.overlay.close_event_allowed = True
+        ctrl.overlay.close()
+        ctrl._tray.hide()
+        ctrl.deleteLater()
+        qapp.processEvents()
+
+    def test_grace_check_does_not_open_popup(self, controller):
+        controller.overlay.show()
+        check = UpdateCheck(
+            tag="1.1.0",
+            notes="Test notes",
+            assets=[],
+            update_available=True,
+            locked=False,
+            should_popup=True,
+        )
+        controller._on_update_check_done(check)
+        assert controller._update_popup is None
+        assert controller.overlay._update_banner.isVisible()
+
+
+class TestPreDownloadedInstaller:
+    """C7: the popup skips downloading when the version is already fetched,
+    SHA-256 verified, and still on disk."""
+
+    def _seed(self, tmp_path, tag: str = "1.1.0", with_file: bool = True):
+        exe = tmp_path / f"GhostMind-Setup-{tag}.exe"
+        if with_file:
+            exe.write_bytes(b"MZ" + b"A" * 1000)
+        state_file = tmp_path / "state.json"
+        state_file.write_text(
+            json.dumps(
+                {
+                    "downloaded_version": tag,
+                    "downloaded_path": str(exe),
+                    "downloaded_sha_ok": True,
+                }
+            ),
+            encoding="utf-8",
+        )
+        return exe, state_file
+
+    def test_popup_reuses_pre_downloaded_installer(self, qapp, spies, tmp_path):
+        exe, state_file = self._seed(tmp_path)
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._installer_path == str(exe)
+        assert popup._update_btn.text() == "Restart installer"
+        assert "already downloaded" in popup._status.text()
+
+    def test_clicking_pre_downloaded_runs_installer(
+        self, qapp, spies, tmp_path, monkeypatch
+    ):
+        import ui.update_popup as popup_mod
+
+        exe, state_file = self._seed(tmp_path)
+        launched: List[str] = []
+        monkeypatch.setattr(
+            popup_mod.os, "startfile", lambda p: launched.append(str(p)), raising=False
+        )
+        quit_calls: List[bool] = []
+
+        class FakeApp:
+            def quit(self):
+                quit_calls.append(True)
+
+        fake_qapp = type(
+            "FakeQApplication",
+            (),
+            {"instance": staticmethod(lambda: FakeApp())},
+        )
+        monkeypatch.setattr(popup_mod, "QApplication", fake_qapp)
+
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        popup._update_btn.click()
+        assert launched == [str(exe)]
+        assert quit_calls == [True]
+        assert "popup" in spies, "installer launch must record the popup"
+
+    def test_missing_pre_download_falls_back_to_normal_flow(self, qapp, spies, tmp_path):
+        _exe, state_file = self._seed(tmp_path, with_file=False)
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._update_btn.text() == "Update Now"
+        assert popup._installer_path is None
+
+    def test_pre_download_for_other_version_ignored(self, qapp, spies, tmp_path):
+        _exe, state_file = self._seed(tmp_path, tag="9.9.9")
+        popup = UpdatePopup(_check(locked=False), locked=False, state_path=state_file)
+        assert popup._update_btn.text() == "Update Now"
+        assert popup._installer_path is None
+
+
+_WHATS_NEW_BODY = (
+    "GhostMind v1.1.0 — choose your AI provider.\n"
+    "\n"
+    "### What's New\n"
+    "- **Any AI provider**: add a Base URL and API key\n"
+    "- `Steady answers`: same question, same answer\n"
+    "\n"
+    "### Install\n"
+    "- **Installer:** `GhostMind-Setup-1.1.0.exe` — per-user install\n"
+    "- **Verify:** compare downloads against `SHA256SUMS.txt`\n"
+)
+
+
+class TestWhatsNewUI:
+    """C8: the popup shows plain-language bullets, never raw markdown."""
+
+    def test_popup_renders_whats_new_bullets(self, qapp):
+        check = UpdateCheck(
+            tag="1.1.0", notes=_WHATS_NEW_BODY, assets=[], update_available=True
+        )
+        popup = UpdatePopup(check, locked=False)
+        text = popup._notes_view.toPlainText()
+
+        assert "What's New" in text
+        assert "Any AI provider: add a Base URL and API key" in text
+        assert "Steady answers: same question, same answer" in text
+
+    def test_popup_hides_raw_markdown_and_packaging(self, qapp):
+        check = UpdateCheck(
+            tag="1.1.0", notes=_WHATS_NEW_BODY, assets=[], update_available=True
+        )
+        popup = UpdatePopup(check, locked=False)
+        text = popup._notes_view.toPlainText()
+
+        assert "###" not in text
+        assert "**" not in text
+        assert "Installer:" not in text
+        assert "SHA256SUMS" not in text
+
+    def test_browser_button_is_gone(self, qapp):
+        popup = UpdatePopup(_check(locked=False), locked=False)
+        texts = [b.text() for b in popup.findChildren(QPushButton)]
+        assert "Open release page in browser" not in texts
+
+    def test_grace_buttons_are_update_and_later_only(self, qapp, tmp_path):
+        popup = UpdatePopup(
+            _check(locked=False), locked=False, state_path=tmp_path / "s.json"
+        )
+        visible = {
+            b.text()
+            for b in popup.findChildren(QPushButton)
+            if not b.isHidden()
+        }
+        assert visible == {"Update Now", "Later"}
+
+    def test_locked_buttons_are_update_only(self, qapp, tmp_path):
+        popup = UpdatePopup(
+            _check(locked=True), locked=True, state_path=tmp_path / "s.json"
+        )
+        visible = {
+            b.text()
+            for b in popup.findChildren(QPushButton)
+            if not b.isHidden()
+        }
+        assert visible == {"Update Now"}
+
+    def test_locked_phase_still_blocks_close_and_valves_later(self, qapp, spies):
+        """Regression: C8 must not disturb the locked-phase contract."""
+        popup = UpdatePopup(_check(locked=True), locked=True)
+        popup.show()
+        popup.reject()
+        popup.close()
+        assert spies == [], "locked dialog must not record a snooze on close"
+        assert popup.isVisible()

@@ -50,7 +50,7 @@ class TestSettingsV1Cuts:
     def test_audio_tab_hidden(self, qapp):
         panel = SettingsPanel(dict(BASE_SETTINGS))
         names = [panel._tabs.tabText(i) for i in range(panel._tabs.count())]
-        assert names == ["General", "Audio", "Shortcuts", "API", "Preferences", "About"]
+        assert names == ["General", "Audio", "Shortcuts", "API", "Preferences", "Feedback", "About"]
         assert not panel._tabs.isTabVisible(1)  # Audio
 
     def test_subtitle_and_export_rows_hidden(self, qapp):

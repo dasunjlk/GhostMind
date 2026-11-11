@@ -26,6 +26,11 @@ class TestRateLimitDetection:
         assert not _is_rate_limit_error(RuntimeError("connection refused"))
         assert not _is_rate_limit_error(RuntimeError("model_not_found"))
 
+    def test_detects_status_code_attribute(self):
+        err = RuntimeError("request failed")
+        err.status_code = 429
+        assert _is_rate_limit_error(err)
+
 
 class TestBackoffDelay:
     def test_exponential_delays(self):

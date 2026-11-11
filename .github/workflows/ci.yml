@@ -25,3 +25,9 @@ jobs:
 
       - name: Tests
         run: pytest -q
+
+      - name: Dependency audit (informational, C15)
+        run: |
+          pip install pip-audit
+          pip-audit --skip-editable --desc off
+        continue-on-error: true

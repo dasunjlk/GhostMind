@@ -1,46 +1,161 @@
+<p align="center">
+  <img src="assets/docs/banner.png" alt="GhostMind — Scan. Ask. Answered." width="100%">
+</p>
+
+<p align="center">
+  <a href="https://github.com/dasunjlk/GhostMind/releases/latest"><img src="https://img.shields.io/github/v/tag/dasunjlk/GhostMind?label=version&color=00FFA3" alt="Version"></a>
+  &nbsp;
+  <a href="https://github.com/dasunjlk/GhostMind/actions/workflows/ci.yml"><img src="https://github.com/dasunjlk/GhostMind/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  &nbsp;
+  <img src="https://img.shields.io/badge/platform-Windows_10%2B-2EA043" alt="Windows 10+">
+  &nbsp;
+  <img src="https://img.shields.io/badge/python-3.11-2EA043" alt="Python 3.11">
+  &nbsp;
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/dasunjlk/GhostMind?color=2EA043" alt="MIT License"></a>
+</p>
+
 # GhostMind
 
-GhostMind is a **stealth AI overlay** for Windows. It stays above other windows as a semi-transparent, frameless panel that is hidden from the taskbar and Alt+Tab, and is excluded from most screen-capture APIs so it stays off Zoom, Teams, OBS, and similar tools (OS-dependent). It can OCR the selected monitor, transcribe microphone (and optional system loopback) audio with local Whisper, and send context to **qwen3.8-27B** (via Groq) for concise answers inside the app.
+GhostMind is a **stealth AI assistant** for Windows. It lives on your screen as an always-on-top overlay that is hidden from the taskbar and Alt+Tab and excluded from most screen capture APIs, so it never shows up in Zoom, Teams, or OBS. Read something on your screen and want an answer? Press one hotkey - GhostMind finds the actual question and answers it. Or just type a question. Answers stream from **any OpenAI-compatible AI provider** you choose.
+
+## Why GhostMind
+
+- 🕶 **Truly stealth** - excluded from screen captures, no taskbar or Alt+Tab entry, optional click-through mode, drag-and-resize overlay
+- 🔌 **Your provider, your choice** - any OpenAI-compatible endpoint works: cloud services, OpenRouter, even local servers on your own machine
+- 🎯 **Understands your screen** - OCR finds the real question on a busy page instead of being distracted by banners and menus
+- 💬 **Remembers the conversation** - session memory keeps context across questions; closing the app wipes it completely
+- 🛡 **Private by design** - error reports and feedback are scrubbed before sending and identified only by a random ID; opt out anytime
+- 🧭 **Zero learning curve** - a guided tour walks you through every setting on first run, replayable anytime
+- ⚡ **Stays out of your way** - global hotkeys, click-through mode, per-monitor capture, streamed answers sized to your window
 
 ## Features
 
-- Always-on-top, draggable, resizable overlay with custom edge handles
-- Windows extended styles: tool window (no taskbar / Alt+Tab entry), optional click-through
-- `SetWindowDisplayAffinity(WDA_EXCLUDEFROMCAPTURE)` for capture exclusion; optional `DWMWA_CLOAK` via settings
-- Screen capture across monitors (`mss`) + Tesseract OCR + optional OpenCV preprocessing
-- **qwen3.8-27B** (via Groq) with ultra-fast streaming replies and markdown-like rendering in the answer panel
-- Default model is **qwen3.8-27B**, with **qwen3.6-27B**, **gpt-oss-120B**, and **gpt-oss-20B** backups available.
-- Global hotkeys via the `keyboard` library
-- System tray icon (show/hide; quit)
-- Settings import/export (JSON)
-- Auto-start on Windows login
-- File logging with rotation (`ghostmind.log`)
-- Anonymous error reporting to Sentry (stack traces + app context only; no transcripts, questions, usernames, or hostnames — disable with `GHOSTMIND_NO_TELEMETRY=1`)
-- Startup dependency check with friendly warnings
-- Keyboard navigation (Escape, Tab, Backtab)
-- Settings stored in `settings.toml` (installed builds use `%LOCALAPPDATA%\GhostMind\data`; source runs use `config/settings.toml`)
+- 📖 **Screen scan** - reads any monitor, filters out page noise (cookie banners, navigation, URLs), and answers the actual question
+- ⌨️ **Ask box** - type anything, no scanning needed, with streamed markdown answers
+- 🔌 **Any OpenAI-compatible provider** - Base URL + API key is all it takes; verify your credentials and see the models your key can use
+- 💬 **Session memory** - follow-up questions remember the conversation within one app run; wiped completely on close
+- 🔁 **Rapid-fire friendly** - questions queue up and are answered one by one, never lost
+- 🎲 **Deterministic answers** - the same question gives the same answer
+- 🖱 **Click-through mode** - let clicks pass through the overlay whenever you only want to look
+- ⌨️ **Remappable global hotkeys** - every action, from anywhere in Windows
+- 🖥 **Per-monitor capture** - choose which screen to scan
+- 📏 **Adaptive text** - font size 9-24 pt applied across the whole app
+- 📣 **In-app feedback** - tell the developer what you think, anonymously
+- 🚀 **Effortless updates** - a banner tells you when a new version exists, it downloads itself, one click installs
+- 🧭 **Guided tour** - learn the whole app in under a minute on first run
 
-> **v1.0 scope:** screen-scan answers and typed questions. Audio capture
-> (subtitles/meeting answers) and transcript export are fully built but hidden in
-> v1.0 and return in a future update — their UI, hotkeys (`Ctrl+Shift+T` /
-> `Ctrl+Shift+E`), and settings rows are reserved accordingly.
+## Usage
 
-## Prerequisites
+### Getting started
 
-- **Windows 10 (2004+)** recommended for `WDA_EXCLUDEFROMCAPTURE` capture exclusion
-- **Python 3.11+**
-- **Tesseract OCR** installed and on `PATH` (or configure `pytesseract` to point at `tesseract.exe`)
+1. Download `GhostMind-Setup-<version>.exe` from the
+   [Releases page](https://github.com/dasunjlk/GhostMind/releases) and run it -
+   per-user install, no admin rights needed. (The installer is unsigned, so
+   SmartScreen may show a warning - choose *More info → Run anyway*.)
+2. The in-app **guided tour** walks you through every setting on first
+   launch - including connecting your provider - so no setup knowledge is
+   needed. Replay it anytime from **Settings → About**.
+3. Open **Settings → API**, paste the API key from your provider, press
+   **Check Available Model**, pick a model, **Save**. Done.
 
-  Install example (Chocolatey): `choco install tesseract`  
-  Or download from: https://github.com/UB-Mannheim/tesseract/wiki
+Everything ships inside the installer, so there is nothing else to download
+or install. Uninstalling keeps your settings and keys
+(`%LOCALAPPDATA%\GhostMind\data`), so reinstalling preserves your setup.
 
-- **Groq API key** — free tier available at [console.groq.com](https://console.groq.com). Paste it in the app under **Settings → API** (stored securely in Windows Credential Manager), or set `GROQ_API_KEY` in `.env` as a fallback.
+| | |
+|---|---|
+| **Requirements**: Windows 10/11 (64-bit) · an API key from any OpenAI-compatible provider · internet for AI answers · ~250 MB disk space. **Nothing else** - the OCR engine ships inside the installer. | |
 
-### Optional: faster GPU for Whisper
+### Guided Tour
 
-`faster-whisper` can use CUDA if you install a CUDA-enabled build of CTranslate2 and compatible drivers. The default configuration uses CPU `int8` for broad compatibility.
+The first launch starts a **step-by-step tour** with a spotlight: each banner highlights one control, and only that control is clickable while the rest of the app dims. It covers the home screen, every settings tab (the API tab gets the deepest coverage), and the home-screen features - finishing with a **Done** button on the last step.
 
-## Installation
+| | |
+|---|---|
+| The first run cannot be skipped, so nobody accidentally misses it - and it can be replayed anytime from **Settings → About → Replay tutorial**.<br><br>**Availability**: the tour starts automatically on first launch and can be replayed from Settings → About at any time. | <img src="assets/docs/screenshots/tutorial.png" width="300"> |
+
+
+
+### Choose your AI provider
+
+GhostMind speaks the OpenAI-compatible API, so most AI services work by entering three things in **Settings → API**:<br><br>
+1. **Base URL** - your provider's API address
+2. **API key** - stored securely in Windows Credential Manager, one slot per provider
+3. **Check Available Model** - verifies your credentials and lists the models your key can use; pick one or type any model ID.
+
+<p align="center">
+  <img src="assets/docs/screenshots/settings-api-1.jpg" width="482" alt="Setting API Tab"> 
+</p>
+
+| Provider | Base URL | Notes |
+|---|---|---|
+| **Preconfigured default** | already set - just add your key | ships ready to use |
+| **OpenRouter** | `https://openrouter.ai/api/v1` | hundreds of models behind one key |
+| **Local servers** (LM Studio, Ollama, …) | `http://localhost:<port>/v1` | fully offline, your hardware |
+| **Any OpenAI-compatible service** | from the provider's docs | most services need the `/v1` path |
+
+If something is wrong, GhostMind tells you **exactly** what: key rejected,
+unreachable host, out of credit, or an unknown model - never a generic error.
+
+### Asking GhostMind
+
+| | |
+|---|---|
+| ⚡ **Scan** (or `Ctrl+Shift+S`): reads the screen, isolates the actual question from page noise, and answers it.<br><br>**Ask box** (or `Ctrl+Shift+Q`): type any question and press Enter - no scanning needed.<br><br>Questions **queue up**: ask several in a row and each gets its own answer, in order.<br><br> | <img src="assets/docs/screenshots/overlay-home.jpg" width="300"> |
+
+**Session memory**: follow-ups remember what you already asked. **Clear** (`Ctrl+Shift+C`) wipes the answers and the memory; closing the app wipes everything.
+
+Global hotkeys (all remappable in **Settings → Shortcuts**):
+
+| Action | Default hotkey |
+|--------|----------------|
+| Toggle overlay visibility | `Ctrl+Shift+G` |
+| Trigger screen scan | `Ctrl+Shift+S` |
+| Clear answers | `Ctrl+Shift+C` |
+| Toggle click-through mode | `Ctrl+Shift+X` |
+| Focus the question input box | `Ctrl+Shift+Q` |
+
+Click-through mode lets mouse clicks pass through the overlay entirely - a
+banner and the tray menu always remain to switch it back off.
+
+### Feedback
+
+| | |
+|---|---|
+| **Settings → Feedback** (or tray → **Send feedback…**): pick what it is, rate the app, add details, and send.<br><br>It is anonymous and scrubbed with the same rules as error reports - with an optional email only if you want a reply.<br><br>If anonymous reporting is disabled, the tab hands you copy-ready text for a GitHub issue instead. | <img src="assets/docs/screenshots/feedback.jpg" width="300"> |
+
+### Updates
+
+| | |
+|---|---|
+| A small **banner** appears inside the app when a new version exists - *What's New* shows plain-language bullets, never markdown soup.<br><br>Once you have been notified, the new installer **downloads itself in the background** into the app's own data folder, SHA-256 verified - then the banner becomes **Restart & install**: one click.<br><br>A 5-day grace period with snoozes keeps you in control; a machine that is fully offline is never locked out. | <img src="assets/docs/screenshots/whatsnew.png" width="300"> |
+
+QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL`, `GHOSTMIND_FORCE_UPDATE=1`,
+`GHOSTMIND_GRACE_DAYS=0`, `GHOSTMIND_TESSERACT_DIR`.
+
+### Settings at a glance
+
+- **General**: monitor selection, scan mode (manual/auto) + interval, opacity, click-through
+- **Shortcuts**: all hotkeys, remappable
+- **API**: Base URL, API key, model selection, credential check
+- **Preferences**: font size (9-24 pt), applied everywhere including rendered answers
+- **Feedback**: talk to the developer
+- **About**: version, GitHub link, Replay tutorial
+- Bottom row: **Save** applies everything; Import/Export move your setup between machines
+
+## Developer guide
+
+**Requirements:** Python 3.11+, Git, and Tesseract OCR on `PATH` (see
+[Requirements](#getting-started); source runs don't bundle it - Chocolatey:
+`choco install tesseract`).
+
+1. Clone and enter the repository.
+2. Create and activate a virtual environment.
+3. Install the dependencies: `pip install -r requirements.txt`.
+4. Run the app: `python main.py`. Anything missing shows a non-blocking
+   banner - the app still starts with reduced functionality.
+
+Full commands:
 
 ```text
 git clone <your-fork-or-repo-url> GhostMind
@@ -48,40 +163,10 @@ cd GhostMind
 python -m venv .venv
 .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-Then launch the app and paste your Groq key under **Settings → API → Save** — it persists across restarts (Windows Credential Manager, with a plaintext `settings.toml` fallback if keyring is unavailable). Optionally, `copy .env.example .env` and set `GROQ_API_KEY` there instead.
-
-### Fonts (optional)
-
-For the intended look, place **JetBrains Mono**, **Inter**, or **DM Sans** under `assets/fonts/` (`.ttf` / `.otf`). If they are missing, the UI falls back to **Segoe UI** / **Consolas**.
-
-### Run
-
-```text
 python main.py
 ```
 
-GhostMind checks for missing dependencies on startup and shows a warning dialog if anything is unavailable. The app still starts — just with reduced functionality.
-
-### Windows installer (end users)
-
-Grab `GhostMind-Setup-<version>.exe` from the
-[Releases page](https://github.com/dasunjlk/GhostMind/releases) and run it —
-per-user install (`%LOCALAPPDATA%\GhostMind`), no admin rights needed. The
-installer is **unsigned**, so Windows SmartScreen may show "Windows protected
-your PC" — choose *More info → Run anyway*. Optional checkboxes: desktop
-shortcut (on by default) and "Start with Windows".
-
-Uninstalling removes the app files but keeps `%LOCALAPPDATA%\GhostMind\data`
-(settings, update state, anonymous ID, logs), so reinstalling preserves your setup.
-
-**Tesseract OCR is not bundled** (license + size); install it separately (see
-Prerequisites). Its bundled license/apache notice applies only to the copy you
-install yourself. All other third-party components are Python packages bundled
-by PyInstaller under their own licenses.
-
-### Lint & tests (development)
+Quality checks:
 
 ```text
 pip install -r requirements-dev.txt
@@ -89,236 +174,162 @@ ruff check .
 pytest -q
 ```
 
-## Usage
-
-### Scan button & hotkeys
-
-The ⚡ **Scan** button in the overlay's header bar triggers the same action as the screen-scan hotkey — use whichever is convenient. All hotkeys remain fully functional:
-
-### Preferences
-
-Under **Settings → Preferences** you can set the app's **font size** (9–24 pt) — it applies to answers, subtitles, the question input, and the general UI, including already-rendered answers. More appearance options will land here in future updates.
-
-### Audio capture quick toggles *(hidden in v1.0)*
-
-Next to the Scan button, two small icons will let you enable/disable audio sources without opening Settings — click to toggle:
-
-- 🎙 **Microphone capture** — shows a red slash when off (Zoom-style); if your system has no microphone at all, the icon shows an amber "❗" warning badge instead
-- 🔊 **System audio capture** — same slash treatment
-
-Enable either one alone, both together, or neither. Changes take effect immediately (same as saving on the Audio tab); the icons stay in sync with the Audio tab checkboxes. Both icons and the audio pipeline ship hidden in v1.0 (see v1.0 scope above).
-
-| Action | Default hotkey |
-|--------|----------------|
-| Toggle overlay visibility | `Ctrl+Shift+G` |
-| Trigger screen OCR + AI | `Ctrl+Shift+S` |
-| Clear answers | `Ctrl+Shift+C` |
-| Switch Answers ↔ Subtitles tab *(hidden in v1.0)* | `Ctrl+Shift+T` |
-| Export transcript *(hidden in v1.0)* | `Ctrl+Shift+E` |
-| Toggle click-through mode | `Ctrl+Shift+X` |
-| Focus the question input box | `Ctrl+Shift+Q` |
-
-### Keyboard Navigation
-
-| Key | Action |
-|-----|--------|
-| `Escape` | Close settings (if open) or hide overlay |
-| `Tab` | Cycle to next tab |
-| `Shift+Tab` | Cycle to previous tab |
-
-### Tabs
-
-- **Answers** tab: shows streamed AI answers with copy per block.
-- **Subtitles** tab *(hidden in v1.0)*: rolling transcript (`Mic:` / `System:`). Lines containing `?` or question keywords schedule a short debounce, then the recent transcript is sent to the AI as **meeting** context.
-
-### System Tray
-
-The green "G" icon lives in the system tray. Right-click for:
-- Show/Hide overlay
-- Export transcript *(hidden in v1.0)*
-- Quit
-
-Double-click the tray icon to toggle overlay visibility.
-
-### Settings
-
-Click the **green dot** in the header to open settings. Configure:
-- Monitor selection, scan mode (manual/auto), opacity
-- Click-through mode
-- API key (with test button)
-- Import/Export settings (JSON)
-
-Audio capture settings (mic/system, Whisper model) and the "Subtitles on Startup"
-row are present but hidden in v1.0 (see v1.0 scope above).
-
-### Export *(hidden in v1.0)*
-
-Save the full meeting transcript via:
-- `Ctrl+Shift+E` hotkey
-- "Save" button in the Subtitles tab
-- Tray menu → "Export transcript"
-
-Choose `.txt` (plain text) or `.md` (markdown with timestamps and formatting).
-
-## Configuration (`settings.toml`)
-
-Installed builds store it at `%LOCALAPPDATA%\GhostMind\data\settings.toml`; when running from source it is `config/settings.toml`. Set `GHOSTMIND_DATA_DIR` to override the data directory (QA/tests). Created when you click **Save** in settings. Keys include:
-
-| Key | Meaning |
-|-----|---------|
-| `monitor_id` | `mss` monitor index (1 = first physical monitor) |
-| `scan_mode` | `manual` or `auto` |
-| `auto_scan_interval_sec` | Seconds between OCR runs when `auto` |
-| `opacity` | Window opacity `0.5`–`1.0` |
-| `click_through` | If true, `WS_EX_TRANSPARENT` so clicks pass through |
-| `dwm_cloak` | If true, applies `DWMWA_CLOAK` (default false) |
-| `subtitles_enabled` | Start Whisper listeners on launch |
-| `capture_mic` | Capture microphone |
-| `capture_system` | Capture WASAPI loopback when available |
-| `whisper_model` | `tiny` / `base` / `small` / `medium` |
-| `loopback_device` | Optional integer sounddevice index; `null` = auto-detect |
-| `hotkeys.*` | Combo strings for all actions |
-
-Hotkey strings follow the `keyboard` library format (e.g. `ctrl+shift+g`).
-
-The listening keys (`subtitles_enabled`, `capture_mic`, `capture_system`,
-`whisper_model`, `loopback_device`) are reserved for the future audio update and
-stay inactive in v1.0. Window position/size is also persisted here
-(`window_x/y/w/h`, `window_screen`).
-
-## Updates
-
-GhostMind checks GitHub **once at launch and every 6 hours** while running (cached — never more than one check per 6h window, even across restarts).
-
-- **Update available** → a popup shows the release notes. During the first **5 days** you can close it and keep using the current version ("Later" snoozes it for 24h).
-- **After 5 days** the popup can no longer be closed: use **Update Now** to download `GhostMind-Setup-<version>.exe` (SHA-256 verified against `SHA256SUMS.txt` before it runs) — the installer closes GhostMind; start GhostMind again when it finishes.
-- **Safety valve:** if downloads keep failing after the grace period (e.g. GitHub is unreachable), a **Continue for 24 hours** option appears — it re-locks after 24h. A machine that is fully offline is never locked out.
-- Fully automatic: update checking contacts only GitHub. Separately, **anonymous error reports** (scrubbed stack traces + app/OS version, identified only by a random local UUID) are sent to Sentry so bugs can be fixed in future releases — see **Security & ethics** to opt out.
-
-QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL` (point at another releases URL, `file://` JSON works), `GHOSTMIND_FORCE_UPDATE=1`, `GHOSTMIND_GRACE_DAYS=0`.
-
-## Troubleshooting
-
-- **`TesseractNotFoundError` / empty OCR**  
-  Install Tesseract and ensure `tesseract` is on `PATH`. GhostMind shows a friendly warning on startup if Tesseract is missing.
-
-- **Invalid / missing API key**  
-  Paste your key in **Settings → API** and hit **Save** — the app checks the key and model immediately and shows the problem inline. Keys are stored in Windows Credential Manager. Free keys at the [Groq console](https://console.groq.com). The default model is `qwen/qwen3.8-27b` with backups `qwen/qwen3.6-27b`, `openai/gpt-oss-120b`, and `openai/gpt-oss-20b`; use **＋ Add custom model…** for any other Groq model ID.
-
-
-- **No microphone or loopback device**  
-  Grant microphone permission on Windows. Loopback requires a WASAPI loopback-capable device; if none is found, only mic capture runs.
-
-- **Global hotkeys not firing**  
-  The `keyboard` library on Windows may need **Run as administrator** for low-level hooks in some environments.
-
-- **Window still visible in a specific recorder**  
-  Capture exclusion depends on the app honoring `WDA_EXCLUDEFROMCAPTURE`. Some tools or GPU drivers may behave differently.
-
-- **Check the log file**  
-  GhostMind writes detailed logs to `ghostmind.log` (rotating, 1MB x 3 backups) in `%LOCALAPPDATA%\GhostMind\data` for installed builds, or the repository root when running from source. Check this file for crash diagnostics.
+Optional fonts: place **JetBrains Mono**, **Inter**, or **DM Sans** under
+`assets/fonts/`. Without them the UI falls back to **Segoe UI** / **Consolas**.
 
 ## Architecture
 
-```text
-+------------------------------------------------------------------+
-|                          main.py                                 |
-|  QApplication, settings load/save, SIGINT, GhostMindController   |
-|  System tray, dependency check, file logging                     |
-+----------+--------------+-------------------+--------------------+
-           |              |                   |
-           v              v                   v
-+----------------+  +------------------+  +------------------+
-| HotkeyManager  |  |  AudioListener   |  |  System Tray     |
-| (keyboard lib) |  |  (QThread + STT) |  |  (QSystemTray)   |
-+--------+-------+  +---------+--------+  +------------------+
-         |                    |
-         | signals            | subtitle_updated
-         v                    v
-+-------------------------------------------------------------+
-|                     OverlayWindow (QMainWindow)             |
-|  stealth.apply_stealth(hwnd) on show / move / resize        |
-|  + Header (drag) + Tabs (Answers | Subtitles) + Settings    |
-+-------+------------------------------------+----------------+
-        |                                    |
-        v                                    v
- +-------------+                     +---------------+
- | AnswerPanel |                     | SubtitleBar   |
- | + AI stream |                     | + formatter   |
- +------+------+                     +-------+-------+
-        |                                    |
-        v                                    v
- +-------------+                     +---------------+
- | AiStream    |                     | Save/Export   |
- | Worker      |                     |               |
- +------+------+                     +---------------+
-        |
-        v
- +-------------+     +------------------+
- | AiStream    |<--->| Groq API         |
- | Worker      |     | (qwen3.8-27b)    |
- +-------------+     +------------------+
+The application is a PyQt6 overlay with a provider-agnostic AI core:
 
- +------------------+       +-------------------+
- | ScreenScanWorker | ----> | mss + pytesseract |
- +------------------+       +-------------------+
+<p align="center">
+  <img src="assets/docs/architecture.jpg" alt="GhostMind architecture — interface, application core, platform services" width="100%">
+</p>
 
- +------------------+       +-------------------+
- | utils/autostart  | ----> | Windows Registry  |
- +------------------+       +-------------------+
+**Interface** (`ui/`): the overlay window, answer panel with its question
+queue, settings, the guided tour, update banner, and feedback panel.
+**Application core** (`main.py` + `core/`): the controller owning tray,
+hotkeys and settings; the streaming AI engine; multi-monitor capture with
+question isolation; session memory; the Win32 stealth layer.
+**Platform** (`utils/` + system): the provider API, GitHub releases, Sentry,
+Windows Credential Manager, the bundled OCR engine, and the installer.
 
- +------------------+       +-------------------+
- | utils/config_io  | ----> | JSON import/export|
- +------------------+       +-------------------+
-```
-
-## Project Structure
+## Project structure
 
 ```text
 GhostMind/
-├── main.py                 # Entry point, controller, tray, logging, updates
+├── main.py                 # Entry point, controller, tray, logging, updates, feedback, tour
+├── version.py              # Single source of truth for the app version
 ├── core/
-│   ├── ai_engine.py        # Groq API (qwen3.8-27B) streaming + prompt routing
-│   ├── audio_listener.py   # Mic/system capture + faster-whisper STT (hidden in v1.0)
-│   ├── screen_reader.py    # mss screenshot + Tesseract OCR
-│   ├── question_detect.py  # Question keyword detection (transcript)
+│   ├── ai_engine.py        # Provider-agnostic streaming + prompt routing (temperature 0 + seed)
+│   ├── screen_reader.py    # Multi-monitor capture + OCR (+ bundled-OCR resolution)
+│   ├── screen_focus.py     # OCR noise filtering / on-screen question isolation
+│   ├── session_memory.py   # In-process conversation memory (wiped on exit)
+│   ├── question_detect.py  # Question keyword detection
 │   └── stealth.py          # Win32 stealth (hide from capture/taskbar)
 ├── ui/
-│   ├── overlay_window.py   # Main frameless window (drag, resize, tabs)
+│   ├── overlay_window.py   # Main frameless window (drag, resize, tabs, tour host)
 │   ├── answer_panel.py     # Scrollable answer history with markdown
-│   ├── subtitle_bar.py     # Live transcript ticker (hidden in v1.0)
-│   ├── settings_panel.py   # In-overlay settings
-│   └── update_popup.py     # Update popup + forced-update lock (U-01)
+│   ├── settings_panel.py   # General/Shortcuts/API/Prefs/Feedback/About
+│   ├── feedback_panel.py   # In-app user feedback tab
+│   ├── tutorial.py         # Guided first-run tour (coach-marks)
+│   ├── update_banner.py    # In-app update banner
+│   ├── update_popup.py     # What's New popup + forced-update lock
+│   ├── dependency_banner.py    # Non-blocking startup warnings
+│   └── click_through_banner.py # Click-through indicator/recovery
 ├── utils/
+│   ├── app_paths.py        # Data-dir resolution + legacy migration
 │   ├── formatter.py        # Markdown → HTML renderer
 │   ├── hotkey_manager.py   # Global hotkeys
 │   ├── autostart.py        # Windows auto-start (registry)
 │   ├── config_io.py        # Settings import/export (JSON)
-│   ├── key_store.py        # API key storage (Windows Credential Manager)
-│   ├── updater.py          # Update check, grace state, download + SHA-256 verify
+│   ├── key_store.py        # Per-provider API key storage (Windows Credential Manager)
+│   ├── updater.py          # Update check, auto-download state, SHA-256 verify
+│   ├── whatsnew.py         # Release notes → plain-language What's New bullets
+│   ├── feedback.py         # In-app feedback channel (offline outbox)
 │   └── error_reporter.py   # Anonymous error reporting (Sentry)
 ├── tests/                  # pytest suite (offline; no network)
 ├── assets/
-│   ├── icon.ico            # Window/tray icon
+│   ├── icon_src.svg        # Icon design source
+│   ├── icon.ico            # Window/tray/exe icon (multi-size)
+│   ├── icon_256.png        # Tray icon asset
+│   ├── docs/               # README banner, screenshots, architecture
+│   ├── installer/          # Wizard side art + OCR notice
 │   └── fonts/              # Optional custom fonts
 ├── installer/
-│   └── ghostmind.iss       # Inno Setup script
-├── config/                 # Source-run runtime settings (gitignored)
-├── ghostmind.spec          # PyInstaller onedir build spec
-├── .github/workflows/      # CI + release automation
-├── requirements.txt
-└── ghostmind.log           # Source-run rotating log (gitignored)
+│   └── ghostmind.iss       # Branded Inno Setup script (+ bundled OCR)
+├── scripts/
+│   ├── generate_icons.py   # SVG → icons/wizard art (dev tool)
+│   └── visual_check.py     # Offscreen UI smoke + screenshots (dev tool)
+├── .github/
+│   ├── workflows/          # CI + release automation
+│   └── dependabot.yml      # Weekly dependency + action updates
+├── pyproject.toml          # Ruff lint configuration
+├── requirements.txt        # Runtime dependencies
+├── requirements-dev.txt    # Development dependencies (ruff, pytest)
+├── LICENSE                 # MIT
+├── SECURITY.md             # Security policy + key-handling guidance
+├── CONTRIBUTING.md         # Contribution guide
+├── CODE_OF_CONDUCT.md      # Contributor Covenant v2.1
+└── RELEASE_NOTES.md        # Notes for the latest release
 
-Installed builds keep settings, update state, the anonymous ID, and logs in
+Installed builds keep settings, keys' metadata, update state, the anonymous
+ID, feedback outbox, downloaded installers, and logs in
 %LOCALAPPDATA%\GhostMind\data instead of the install directory.
 ```
 
+## Troubleshooting
+
+- **Empty OCR / scan finds nothing**
+  Installed builds bundle the OCR engine, so this is rare - check the log
+  file. Running from source? Install Tesseract and ensure `tesseract` is on
+  `PATH`; GhostMind shows a non-blocking banner if it's missing.
+
+- **Invalid / missing API key or model**
+  **Settings → API**: check the Base URL (most providers need the `/v1`
+  path), re-paste the key, press **Check Available Model** - the app tells
+  you exactly what is wrong (key rejected, unreachable host, out of credit,
+  unknown model). Keys live in Windows Credential Manager, one slot per
+  provider - revoke them in the provider's dashboard if needed.
+
+- **Global hotkeys not firing**
+  The `keyboard` library on Windows may need **Run as administrator** for
+  low-level hooks in some environments.
+
+- **Window still visible in a specific recorder**
+  Capture exclusion depends on the app honoring `WDA_EXCLUDEFROMCAPTURE`.
+  Some tools or GPU drivers may behave differently.
+
+- **Check the log file**
+  GhostMind writes detailed logs to `ghostmind.log` (rotating, 1MB × 3
+  backups) in `%LOCALAPPDATA%\GhostMind\data` for installed builds, or the
+  repository root when running from source.
+
 ## Security & ethics
 
-**Anonymous error reporting.** GhostMind sends crash/error reports to Sentry (stack traces, error messages, app version, OS/Python version) so bugs can be fixed in future updates. Reports never contain transcripts, questions, window contents, API keys, usernames, hostnames, or home-directory paths (all scrubbed before sending); each install is identified only by a random UUID stored in the local data directory (`config/anonymous_id.txt` from source, `%LOCALAPPDATA%\GhostMind\data\config\anonymous_id.txt` when installed). Disable anytime with the environment variable `GHOSTMIND_NO_TELEMETRY=1`. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`, `GHOSTMIND_TEST_ERROR=1`.
+**Anonymous error reporting and feedback.** GhostMind sends crash reports -
+and, when you choose, in-app feedback - to Sentry. Both are scrubbed before
+sending: no screen text, questions, window contents, API keys
+(`gsk_…`/`sk-…` patterns are masked), usernames, hostnames, or home paths.
+Each install is identified only by a random UUID stored locally
+(`%LOCALAPPDATA%\GhostMind\data\config\anonymous_id.txt`). Feedback text is
+scrubbed with the same rules; an optional reply email is used only if you
+provide it; failed sends wait in a local outbox. Disable everything anytime
+with `GHOSTMIND_NO_TELEMETRY=1` - the app then never contacts Sentry and the
+feedback tab says so honestly. Maintainer QA hooks: `GHOSTMIND_SENTRY_DSN`,
+`GHOSTMIND_TEST_ERROR=1`.
 
-GhostMind is built for legitimate personal productivity (e.g. private assistance during your own calls or content). **Bypassing exam proctoring, workplace policy, or consent rules is misuse.** You are responsible for compliance with laws, contracts, and platform terms.
+**API keys** are stored in Windows Credential Manager, one slot per provider
+host, and never written to settings exports. Plaintext fallback (only if
+keyring is unavailable) stays in the local data directory.
+
+GhostMind is built for legitimate personal productivity (e.g. private
+assistance during your own calls or content). **Bypassing exam proctoring,
+workplace policy, or consent rules is misuse.** You are responsible for
+compliance with laws, contracts, and platform terms.
+
+## Community
+
+Bug reports, feedback, and contributions are welcome. The best channels:
+
+- **In-app**: Settings → Feedback (anonymous, goes straight to the developer)
+- **Issues**: [github.com/dasunjlk/GhostMind/issues](https://github.com/dasunjlk/GhostMind/issues) for bugs and feature ideas
+- **Security**: the [Security tab](https://github.com/dasunjlk/GhostMind/security) — never public issues
+
+## Contributing
+
+Code and docs improvements are welcome. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the development setup, the branch and
+commit conventions, the quality gates (`ruff` + offline `pytest`), and the
+ground rules (no secrets, no new telemetry, offline test discipline).
+
+## Code of Conduct
+
+By participating in this project you agree to the
+[Code of Conduct](CODE_OF_CONDUCT.md) — keep discussions respectful for
+everyone.
 
 ## License
 
-See `LICENSE` in the repository.
+See [LICENSE](LICENSE) in the repository. GhostMind is MIT-licensed; the
+bundled OCR engine is Apache-2.0 (see
+`assets/installer/TESSERACT-NOTICE.txt`).

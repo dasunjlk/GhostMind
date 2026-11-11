@@ -6,11 +6,13 @@ file:// URLs against a local fixture release JSON.
 from __future__ import annotations
 
 import hashlib
+import os
 from typing import List, Optional
 
 import pytest
 
 import utils.updater as updater
+from utils import app_paths
 from utils.updater import (
     DAY_SEC,
     MAX_CONSECUTIVE_FAILURES,
@@ -449,6 +451,23 @@ class TestDownloadFlow:
         assert not (dest_dir / "GhostMind-Setup-1.1.0.exe").exists()
         assert updater.load_state(state_file)["failed_attempts"] == 1
 
+    def test_download_persists_ready_state_and_cleans_old(self, tmp_path, monkeypatch, fake_release):
+        release, _ = fake_release
+        dest_dir = tmp_path / "dl"
+        dest_dir.mkdir()
+        stale = dest_dir / "GhostMind-Setup-1.0.0.exe"
+        stale.write_bytes(b"old-installer")
+        monkeypatch.setattr(updater, "installer_dest", lambda ver: dest_dir / f"GhostMind-Setup-{ver}.exe")
+        state_file = tmp_path / "state.json"
+        path = updater.download_installer(release, state_path=state_file)
+
+        state = updater.load_state(state_file)
+        assert state["downloaded_version"] == "1.1.0"
+        assert state["downloaded_path"] == str(path)
+        assert state["downloaded_sha_ok"] is True
+        assert not stale.exists(), "retention must remove stale installers"
+        assert path.exists()
+
     def test_missing_installer_asset(self, tmp_path):
         with pytest.raises(UpdaterError, match="not found on the release page"):
             updater.download_installer(_release("1.1.0", assets=[
@@ -478,3 +497,36 @@ class TestOfflineSafety:
         # check_for_update must propagate that as "silently skip".
         monkeypatch.setattr(updater, "fetch_latest_release", lambda timeout=10.0: None)
         assert updater.check_for_update("1.0.0", state_path=tmp_path / "s.json") is None
+
+
+# --------------------------------------------------------------------------- #
+# C7: app-managed updates folder (never the user's Downloads/Pictures)
+# --------------------------------------------------------------------------- #
+
+class TestUpdatesDir:
+    def test_installer_dest_lives_in_updates_dir(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("GHOSTMIND_DATA_DIR", str(tmp_path))
+        dest = updater.installer_dest("1.2.3")
+        assert dest.name == "GhostMind-Setup-1.2.3.exe"
+        assert dest.parent == app_paths.updates_dir()
+        assert dest.parent == tmp_path / "updates"
+
+    def test_source_run_updates_dir_is_config_folder(self):
+        # Without the env override (and unfrozen), source runs keep everything
+        # under <repo>/config — same convention as settings and update state.
+        if os.environ.get("GHOSTMIND_DATA_DIR"):
+            pytest.skip("GHOSTMIND_DATA_DIR set — source-layout check not applicable")
+        assert app_paths.updates_dir().name == "updates"
+        assert app_paths.updates_dir().parent.name == "config"
+
+    def test_cleanup_keeps_only_latest(self, tmp_path):
+        keep = tmp_path / "GhostMind-Setup-2.0.0.exe"
+        old1 = tmp_path / "GhostMind-Setup-1.0.0.exe"
+        old2 = tmp_path / "GhostMind-Setup-1.1.0.exe"
+        other = tmp_path / "unrelated.txt"
+        for f in (keep, old1, old2, other):
+            f.write_bytes(b"x")
+        removed = updater.cleanup_old_installers(keep)
+        assert keep.exists() and other.exists()
+        assert not old1.exists() and not old2.exists()
+        assert set(removed) == {old1, old2}

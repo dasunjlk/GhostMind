@@ -2,9 +2,13 @@
 from __future__ import annotations
 
 from core.ai_engine import (
+    DEFAULT_BASE_URL,
     DEFAULT_CAPACITY,
+    DETERMINISTIC_SEED,
+    DETERMINISTIC_TEMPERATURE,
     MAX_TOKENS,
     _classify_screen_text,
+    _models_to_try,
     _screen_system_addon,
     build_system_prompt,
     build_user_message,
@@ -98,6 +102,10 @@ class TestScreenSystemAddon:
         addon = _screen_system_addon("general")
         assert "summarize" in addon.lower() or "answer" in addon.lower()
 
+    def test_every_screen_addon_requires_the_question_quote(self):
+        for kind in ("quiz_mcq", "essay", "coding", "question", "general"):
+            assert "Relevant question:" in _screen_system_addon(kind)
+
 
 class TestBuildSystemPrompt:
     def test_meeting_prompt(self):
@@ -124,6 +132,22 @@ class TestBuildSystemPrompt:
     def test_prompt_contains_base_system(self):
         prompt = build_system_prompt("screen", "anything")
         assert "concise" in prompt.lower() or "clearly" in prompt.lower()
+
+    def test_screen_prompt_quotes_the_relevant_question_first(self):
+        prompt = build_system_prompt(
+            "screen",
+            "Which of the following is largest?\nA) Earth\nB) Jupiter",
+        )
+        assert "Relevant question:" in prompt
+        assert prompt.index("Relevant question:") < prompt.index("**Answer:**")
+
+    def test_non_screen_prompts_do_not_require_the_quote(self):
+        assert "Relevant question:" not in build_system_prompt(
+            "manual", "Which planet is largest?"
+        )
+        assert "Relevant question:" not in build_system_prompt(
+            "meeting_question", "Which planet is largest?"
+        )
 
 
 class TestBuildUserMessage:
@@ -257,3 +281,26 @@ class TestLengthHints:
     def test_manual_gets_hint(self):
         prompt = build_system_prompt("manual", "What is 2+2?", DEFAULT_CAPACITY * 2)
         assert "large display" in prompt
+
+
+class TestProviderDefaults:
+    def test_default_base_url_is_groq(self):
+        assert DEFAULT_BASE_URL == "https://api.groq.com/openai/v1"
+
+    def test_deterministic_settings(self):
+        assert DETERMINISTIC_TEMPERATURE == 0.0
+        assert DETERMINISTIC_SEED == 7
+
+    def test_groq_uses_backup_models(self):
+        models = _models_to_try("qwen/qwen3.8-27b", DEFAULT_BASE_URL)
+        assert models[0] == "qwen/qwen3.8-27b"
+        assert "qwen/qwen3.6-27b" in models
+        assert "openai/gpt-oss-120b" in models
+
+    def test_custom_provider_never_uses_groq_backups(self):
+        models = _models_to_try("some/model", "https://openrouter.ai/api/v1")
+        assert models == ["some/model"]
+
+    def test_trailing_slash_still_counts_as_default(self):
+        models = _models_to_try("qwen/qwen3.8-27b", DEFAULT_BASE_URL + "/")
+        assert len(models) > 1
