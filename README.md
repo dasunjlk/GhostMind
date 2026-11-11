@@ -66,28 +66,26 @@ or install. Uninstalling keeps your settings and keys
 |---|---|
 | **Requirements**: Windows 10/11 (64-bit) · an API key from any OpenAI-compatible provider · internet for AI answers · ~250 MB disk space. **Nothing else** - the OCR engine ships inside the installer. | |
 
-### Guided tour
+### Guided Tour
 
-The first launch starts a **step-by-step tour** with a spotlight: each banner
-highlights one control, and only that control is clickable while the rest of
-the app dims. It covers the home screen, every settings tab (the API tab gets
-the deepest coverage), and the home-screen features - finishing with a
-**Done** button on the last step. The first run cannot be skipped, so nobody
-accidentally misses it - and it is replayed anytime from
-**Settings → About → Replay tutorial**.
+The first launch starts a **step-by-step tour** with a spotlight: each banner highlights one control, and only that control is clickable while the rest of the app dims. It covers the home screen, every settings tab (the API tab gets the deepest coverage), and the home-screen features - finishing with a **Done** button on the last step.
 
 | | |
 |---|---|
-| **Availability**: the tour starts automatically on first launch and can be replayed from Settings → About at any time. | <img src="assets/docs/screenshots/tutorial.png" width="300"> |
+| The first run cannot be skipped, so nobody accidentally misses it - and it can be replayed anytime from **Settings → About → Replay tutorial**.<br><br>**Availability**: the tour starts automatically on first launch and can be replayed from Settings → About at any time. | <img src="assets/docs/screenshots/tutorial.png" width="300"> |
+
+
 
 ### Choose your AI provider
 
-GhostMind speaks the OpenAI-compatible API, so most AI services work by
-entering three things in **Settings → API**:
-
+GhostMind speaks the OpenAI-compatible API, so most AI services work by entering three things in **Settings → API**:<br><br>
 1. **Base URL** - your provider's API address
 2. **API key** - stored securely in Windows Credential Manager, one slot per provider
-3. **Check Available Model** - verifies your credentials and lists the models your key can use; pick one or type any model ID
+3. **Check Available Model** - verifies your credentials and lists the models your key can use; pick one or type any model ID.
+
+<p align="center">
+  <img src="assets/docs/screenshots/settings-api-1.jpg" width="482" alt="Setting API Tab"> 
+</p>
 
 | Provider | Base URL | Notes |
 |---|---|---|
@@ -103,7 +101,9 @@ unreachable host, out of credit, or an unknown model - never a generic error.
 
 | | |
 |---|---|
-| ⚡ **Scan** (or `Ctrl+Shift+S`): reads the screen, isolates the actual question from page noise, and answers it.<br><br>**Ask box** (or `Ctrl+Shift+Q`): type any question and press Enter - no scanning needed.<br><br>Questions **queue up**: ask several in a row and each gets its own answer, in order.<br><br>**Session memory**: follow-ups remember what you already asked. **Clear** (`Ctrl+Shift+C`) wipes the answers and the memory; closing the app wipes everything. | <img src="assets/docs/screenshots/overlay-home.jpg" width="300"> |
+| ⚡ **Scan** (or `Ctrl+Shift+S`): reads the screen, isolates the actual question from page noise, and answers it.<br><br>**Ask box** (or `Ctrl+Shift+Q`): type any question and press Enter - no scanning needed.<br><br>Questions **queue up**: ask several in a row and each gets its own answer, in order.<br><br> | <img src="assets/docs/screenshots/overlay-home.jpg" width="300"> |
+
+**Session memory**: follow-ups remember what you already asked. **Clear** (`Ctrl+Shift+C`) wipes the answers and the memory; closing the app wipes everything.
 
 Global hotkeys (all remappable in **Settings → Shortcuts**):
 
@@ -122,13 +122,13 @@ banner and the tray menu always remain to switch it back off.
 
 | | |
 |---|---|
-| **Settings → Feedback** (or tray → **Send feedback…**): pick what it is, rate the app, add details, and send.<br><br>It is anonymous and scrubbed with the same rules as error reports - with an optional email only if you want a reply.<br><br>If anonymous reporting is disabled, the tab hands you copy-ready text for a GitHub issue instead. | <img src="assets/docs/screenshots/feedback.png" width="300"> |
+| **Settings → Feedback** (or tray → **Send feedback…**): pick what it is, rate the app, add details, and send.<br><br>It is anonymous and scrubbed with the same rules as error reports - with an optional email only if you want a reply.<br><br>If anonymous reporting is disabled, the tab hands you copy-ready text for a GitHub issue instead. | <img src="assets/docs/screenshots/feedback.jpg" width="300"> |
 
 ### Updates
 
 | | |
 |---|---|
-| A small **banner** appears inside the app when a new version exists - *What's New* shows plain-language bullets, never markdown soup.<br><br>Once you have been notified, the new installer **downloads itself in the background** into the app's own data folder, SHA-256 verified - then the banner becomes **Restart & install**: one click.<br><br>A 5-day grace period with snoozes keeps you in control; a machine that is fully offline is never locked out. | <img src="assets/docs/screenshots/update-ready.png" width="300"><br><img src="assets/docs/screenshots/whatsnew.png" width="300"> |
+| A small **banner** appears inside the app when a new version exists - *What's New* shows plain-language bullets, never markdown soup.<br><br>Once you have been notified, the new installer **downloads itself in the background** into the app's own data folder, SHA-256 verified - then the banner becomes **Restart & install**: one click.<br><br>A 5-day grace period with snoozes keeps you in control; a machine that is fully offline is never locked out. | <img src="assets/docs/screenshots/whatsnew.png" width="300"> |
 
 QA/testing hooks (dev only): `GHOSTMIND_UPDATE_URL`, `GHOSTMIND_FORCE_UPDATE=1`,
 `GHOSTMIND_GRACE_DAYS=0`, `GHOSTMIND_TESSERACT_DIR`.
@@ -182,7 +182,7 @@ Optional fonts: place **JetBrains Mono**, **Inter**, or **DM Sans** under
 The application is a PyQt6 overlay with a provider-agnostic AI core:
 
 <p align="center">
-  <img src="assets/docs/architecture.png" alt="GhostMind architecture — interface, application core, platform services" width="100%">
+  <img src="assets/docs/architecture.jpg" alt="GhostMind architecture — interface, application core, platform services" width="100%">
 </p>
 
 **Interface** (`ui/`): the overlay window, answer panel with its question
@@ -198,6 +198,7 @@ Windows Credential Manager, the bundled OCR engine, and the installer.
 ```text
 GhostMind/
 ├── main.py                 # Entry point, controller, tray, logging, updates, feedback, tour
+├── version.py              # Single source of truth for the app version
 ├── core/
 │   ├── ai_engine.py        # Provider-agnostic streaming + prompt routing (temperature 0 + seed)
 │   ├── screen_reader.py    # Multi-monitor capture + OCR (+ bundled-OCR resolution)
@@ -230,15 +231,26 @@ GhostMind/
 ├── assets/
 │   ├── icon_src.svg        # Icon design source
 │   ├── icon.ico            # Window/tray/exe icon (multi-size)
+│   ├── icon_256.png        # Tray icon asset
 │   ├── docs/               # README banner, screenshots, architecture
-│   └── installer/          # Wizard side art + OCR notice
+│   ├── installer/          # Wizard side art + OCR notice
+│   └── fonts/              # Optional custom fonts
 ├── installer/
 │   └── ghostmind.iss       # Branded Inno Setup script (+ bundled OCR)
 ├── scripts/
-│   └── generate_icons.py   # SVG → icons/wizard art (dev tool)
-├── ghostmind.spec          # PyInstaller build spec
-├── .github/workflows/      # CI + release automation
-└── requirements.txt
+│   ├── generate_icons.py   # SVG → icons/wizard art (dev tool)
+│   └── visual_check.py     # Offscreen UI smoke + screenshots (dev tool)
+├── .github/
+│   ├── workflows/          # CI + release automation
+│   └── dependabot.yml      # Weekly dependency + action updates
+├── pyproject.toml          # Ruff lint configuration
+├── requirements.txt        # Runtime dependencies
+├── requirements-dev.txt    # Development dependencies (ruff, pytest)
+├── LICENSE                 # MIT
+├── SECURITY.md             # Security policy + key-handling guidance
+├── CONTRIBUTING.md         # Contribution guide
+├── CODE_OF_CONDUCT.md      # Contributor Covenant v2.1
+└── RELEASE_NOTES.md        # Notes for the latest release
 
 Installed builds keep settings, keys' metadata, update state, the anonymous
 ID, feedback outbox, downloaded installers, and logs in
