@@ -16,7 +16,7 @@
 
 # GhostMind
 
-GhostMind is a **stealth AI assistant** for Windows. It lives on your screen as an always-on-top overlay that is hidden from the taskbar and Alt+Tab and excluded from most screen capture APIs, so it never shows up in Zoom, Teams, or OBS. Read something on your screen and want an answer? Press one hotkey - GhostMind finds the actual question and answers it. Or just type a question. Answers stream from **any OpenAI-compatible AI provider** you choose.
+GhostMind is a **stealth AI assistant** for Windows. It lives on your screen as an always-on-top overlay that is hidden from the taskbar and Alt+Tab and excluded from most screen capture APIs, so it never shows up in Zoom, Teams, or OBS. Read something on your screen and want an answer? Press one hotkey - GhostMind finds the actual question and answers it. Or just type a question. Answers stream from **any OpenAI compatible AI provider** you choose.
 
 ## Why GhostMind
 
